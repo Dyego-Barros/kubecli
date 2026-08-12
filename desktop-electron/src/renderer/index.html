@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KubeCLI Terminal</title>
+  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header>
+    <strong>KubeCLI</strong>
+    <span id="context" class="context" title="Contexto atual">sem-contexto</span>
+    <span class="divider">|</span>
+    <span id="namespace" class="namespace" title="Namespace atual">default</span>
+    <span id="config" title="Kubeconfig atual"></span>
+    <button id="quick">Ações</button>
+    <button id="instructions">Instruções</button>
+    <button id="edit">Editar kubeconfig</button>
+    <button id="choose">Escolher kubeconfig</button>
+  </header>
+  <section id="quick-menu" class="quick-menu" hidden>
+    <button data-command="kubectl get pods">Pods</button>
+    <button data-command="kubectl get services">Services</button>
+    <button data-command="kubectl get deployments">Deployments</button>
+    <button data-command="kubectl get events --sort-by=.lastTimestamp">Events</button>
+    <button data-command="kubectl get nodes">Nodes (cluster)</button>
+    <button data-command="kubecli list">Ferramentas</button>
+    <button data-command="clear">Limpar terminal</button>
+  </section>
+  <section id="instructions-modal" class="help-modal" hidden>
+    <div class="help-card">
+      <div class="help-title">
+        <strong>Instruções do KubeCLI</strong>
+        <button id="close-instructions">Fechar</button>
+      </div>
+      <div class="help-content">
+        <h3>Como funciona</h3>
+        <p>O KubeCLI reúne os comandos Kubernetes, OpenShift, cloud e gerenciamento de ferramentas em um único terminal. Os prefixos são opcionais no app.</p>
+
+        <h3>Comandos Kubernetes</h3>
+        <code>k get pods</code><span>Atalho para <b>kubectl get pods</b></span>
+        <code>get pods -A</code><span>Executa <b>kubectl get pods -A</b></span>
+        <code>pods</code><span>Lista pods no namespace atual</span>
+        <code>svc</code><span>Lista services</span>
+        <code>deploy</code><span>Lista deployments</span>
+        <code>nodes</code><span>Lista nodes do cluster</span>
+        <code>events</code><span>Lista eventos ordenados por data</span>
+        <code>logs POD</code><span>Exibe logs de um pod</span>
+        <code>describe pod/POD</code><span>Detalha um recurso</span>
+        <code>kubectl COMANDO</code><span>Passa qualquer comando diretamente ao kubectl</span>
+
+        <h3>Contexto e namespace</h3>
+        <code>ctx</code><span>Lista contextos</span>
+        <code>ctx list</code><span>Lista contextos explicitamente</span>
+        <code>ctx use NOME</code><span>Troca o contexto Kubernetes</span>
+        <code>x</code><span>Atalho para listar contextos</span>
+        <code>ns</code><span>Lista namespaces</span>
+        <code>ns list</code><span>Lista namespaces explicitamente</span>
+        <code>ns use NOME</code><span>Troca o namespace atual</span>
+        <code>n NOME</code><span>Atalho para trocar namespace</span>
+
+        <h3>CLIs Kubernetes</h3>
+        <code>kubectl ARGS</code><span>Executa kubectl com os argumentos informados</span>
+        <code>kubens ARGS</code><span>Executa kubens</span>
+        <code>kubectx ARGS</code><span>Executa kubectx</span>
+        <code>oc ARGS</code><span>Executa o OpenShift CLI</span>
+        <code>oc get projects</code><span>Exemplo de comando OpenShift</span>
+
+        <h3>Instalação e ferramentas</h3>
+        <code>install kubectl</code><span>Instala kubectl pelo gerenciador detectado</span>
+        <code>install kubens</code><span>Instala kubens</span>
+        <code>install kubectx</code><span>Instala kubectx</span>
+        <code>install oc</code><span>Instala OpenShift CLI</span>
+        <code>install awscli</code><span>Instala AWS CLI</span>
+        <code>install azurecli</code><span>Instala Azure CLI</span>
+        <code>install googlecli</code><span>Instala Google Cloud CLI</span>
+        <code>uninstall NOME</code><span>Remove uma ferramenta com confirmação</span>
+        <code>list</code><span>Mostra sistema, gerenciador e versões</span>
+        <code>setup</code><span>Verifica e instala ferramentas ausentes</span>
+
+        <h3>Aliases</h3>
+        <code>aliases</code><span>Lista aliases disponíveis</span>
+        <code>aliases list</code><span>Lista aliases explicitamente</span>
+        <code>aliases add NOME kubectl get pods</code><span>Cria alias personalizado</span>
+        <code>aliases remove NOME</code><span>Remove alias personalizado</span>
+        <p>Aliases personalizados ficam em <code>~/.config/kubecli/aliases.json</code>.</p>
+
+        <h3>Cloud</h3>
+        <code>cloud login azurecli</code><span>Executa <b>az login</b></span>
+        <code>cloud configure awscli</code><span>Executa <b>aws configure</b></span>
+        <code>cloud login googlecli</code><span>Executa <b>gcloud auth login</b></span>
+        <code>cloud status awscli</code><span>Mostra identidade AWS atual</span>
+        <code>cloud status azurecli</code><span>Mostra conta Azure atual</span>
+        <code>cloud status googlecli</code><span>Lista contas Google autenticadas</span>
+
+        <h3>Kubeconfig</h3>
+        <code>kubeconfig add</code><span>Adiciona cluster interativamente</span>
+        <code>kubeconfig remove NOME</code><span>Remove cluster e contexto associado</span>
+        <p>O app começa com <code>~/.kube/config</code>. Use <b>Escolher kubeconfig</b> para selecionar outro arquivo e <b>Editar kubeconfig</b> para abri-lo.</p>
+
+        <h3>Prompt e shell</h3>
+        <code>prompt</code><span>Mostra contexto e namespace atuais</span>
+        <code>shell-init zsh</code><span>Gera integração para o .zshrc</span>
+        <code>shell-init bash</code><span>Gera integração para o .bashrc</span>
+        <code>kubecli --help</code><span>Exibe a ajuda completa da CLI</span>
+
+        <h3>Atalhos do desktop</h3>
+        <code>⌘K</code><span>Abre a paleta de comandos</span>
+        <code>Ctrl+C</code><span>Interrompe o comando atual</span>
+        <code>clear</code><span>Limpa o terminal</span>
+        <code>Enter</code><span>Executa o comando digitado</span>
+      </div>
+    </div>
+  </section>
+  <section id="command-palette" class="palette" hidden>
+    <input id="palette-input" placeholder="Digite um comando ou ação..." autocomplete="off" />
+    <div id="palette-results"></div>
+  </section>
+  <main id="terminal"></main>
+  <script src="./renderer.js"></script>
+</body>
+</html>

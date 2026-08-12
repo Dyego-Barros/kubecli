@@ -1,0 +1,15 @@
+README.md
+aliases.py
+cloud.py
+installation.py
+kubecli.py
+kubeconfig.py
+prompt.py
+pyproject.toml
+runtime.py
+settings.py
+kubecli_tools.egg-info/PKG-INFO
+kubecli_tools.egg-info/SOURCES.txt
+kubecli_tools.egg-info/dependency_links.txt
+kubecli_tools.egg-info/entry_points.txt
+kubecli_tools.egg-info/top_level.txt

@@ -1,0 +1,242 @@
+# kubecli
+
+CLI Python para centralizar o uso de `kubectl`, `kubens`, `kubectx` e `oc`.
+
+A implementação foi separada por responsabilidade: `kubecli.py` contém o parser, enquanto `installation.py`, `cloud.py`, `kubeconfig.py`, `aliases.py`, `runtime.py` e `settings.py` concentram as funcionalidades específicas.
+
+## Instalação local
+
+Dentro deste diretório (`cli/`), instale a CLI uma vez usando `uv`:
+
+```bash
+uv tool install --editable .
+```
+
+Se estiver na raiz do repositório, use:
+
+```bash
+uv tool install --editable ./cli
+```
+
+Depois disso, use o comando `kubecli` diretamente:
+
+```bash
+kubecli --help
+kubecli ctx
+kubecli ns use monitoring
+kubecli kubectl get pods -A
+```
+
+## Aplicativo desktop
+
+Uma interface desktop simples pode abrir um terminal e executar comandos usando o kubeconfig padrão do usuário:
+
+```bash
+kubecli-desktop
+```
+
+Também é possível iniciar diretamente pelo código-fonte:
+
+```bash
+python cli/kubecli_desktop.py
+```
+
+O aplicativo inicia usando o kubeconfig padrão do usuário (`~/.kube/config`) e permite escolher
+outro arquivo pelo botão `Escolher kubeconfig`. O prompt exibe o contexto e o namespace atuais;
+ele é atualizado após comandos como `kubecli ctx use` e `kubecli ns use`. O aplicativo não armazena tokens.
+O botão `Editar kubeconfig` abre o arquivo atual no editor de texto padrão do sistema.
+
+No terminal desktop, os prefixos são opcionais. Por exemplo, `ctx list`, `ns list`, `pods` e
+`get pods -A` são expandidos automaticamente para os comandos correspondentes.
+Instalações (`oc install`, `setup`, etc.) são abertas no Terminal nativo para preservar prompts,
+`sudo` e entrada interativa do gerenciador de pacotes.
+
+Cada comando possui ajuda própria:
+
+```bash
+kubecli --help
+kubecli aliases --help
+kubecli cloud --help
+kubecli cloud login --help
+kubecli kubeconfig --help
+kubecli kubeconfig add --help
+kubecli prompt --help
+kubecli shell-init --help
+```
+
+## Cluster e namespace no prompt
+
+Selecione o contexto e o namespace com:
+
+```bash
+kubecli ctx use meu-cluster
+kubecli ns use monitoring
+```
+
+Para exibir automaticamente `(cluster/namespace)` no início do prompt, adicione ao `~/.zshrc`:
+
+```bash
+eval "$(kubecli shell-init zsh)"
+```
+
+Depois recarregue o shell:
+
+```bash
+source ~/.zshrc
+```
+
+No Bash, use no `~/.bashrc`:
+
+```bash
+eval "$(kubecli shell-init bash)"
+```
+
+O cluster aparece em amarelo, o namespace em branco e o valor é atualizado quando o prompt é redesenhado.
+
+Se preferir manter a CLI no ambiente virtual do projeto:
+
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+Nesse caso, também é possível executar sem ativar o ambiente:
+
+```bash
+uv run kubecli ctx
+```
+
+Os binários externos continuam necessários no `PATH`:
+
+- `kubectl` para operações Kubernetes;
+- `kubens` para troca de namespace;
+- `kubectx` para troca de contexto;
+- `oc` para operações OpenShift.
+
+## Exemplos
+
+```bash
+kubecli ctx
+kubecli ctx use meu-contexto
+kubecli ns
+kubecli ns use monitoring
+kubecli kubectl get pods -A
+kubecli kubens -c
+kubecli kubectx -c
+kubecli oc get projects
+```
+
+## Instalação dos CLIs de cloud
+
+No macOS/Linux com Homebrew:
+
+```bash
+kubecli install azurecli    # instala az
+kubecli install awscli      # instala aws
+kubecli install googlecli   # instala gcloud
+```
+
+Para remover uma ferramenta instalada pela CLI:
+
+```bash
+kubecli uninstall oc
+kubecli uninstall kubectl
+```
+
+A remoção pede confirmação e usa o gerenciador de pacotes detectado no sistema.
+
+O comando não reinstala uma ferramenta que já esteja no `PATH`.
+
+A CLI identifica o sistema operacional e procura `brew`, `apt`, `dnf`, `pacman`, `zypper`, `winget` ou `choco`. Se nenhum gerenciador compatível for encontrado, ela informa qual gerenciador instalar e não tenta executar uma instalação desconhecida.
+
+## Verificação e versões
+
+Para listar o sistema operacional, o gerenciador de pacotes e a versão de todas as ferramentas:
+
+```bash
+kubecli list
+```
+
+Para verificar e instalar todos os binários ausentes de uma vez:
+
+```bash
+kubecli setup
+```
+
+O `setup` lista o que está faltando e pede confirmação antes de instalar pelo gerenciador detectado. Se um comando como `kubecli kubectl ...`, `kubecli ns ...` ou `kubecli oc ...` depender de um binário ausente, a CLI também oferece a instalação automaticamente.
+
+## Aliases para troubleshooting
+
+Para listar todos os aliases disponíveis:
+
+```bash
+kubecli aliases
+kubecli aliases list
+```
+
+Para cadastrar um alias personalizado:
+
+```bash
+kubecli aliases add meus-pods kubectl get pods -A
+```
+
+Para remover um alias personalizado:
+
+```bash
+kubecli aliases remove meus-pods
+```
+
+Os aliases personalizados são salvos em `~/.config/kubecli/aliases.json`. Os aliases padrão não podem ser removidos.
+
+```bash
+kubecli k get pods -A       # kubectl
+kubecli po -n monitoring    # kubectl get pods -n monitoring
+kubecli svc -A              # kubectl get services -A
+kubecli deploy -A           # kubectl get deployments -A
+kubecli logs deploy/app     # kubectl logs deploy/app
+kubecli describe pod/app    # kubectl describe pod/app
+kubecli x                   # kubectx
+kubecli n monitoring        # kubens monitoring
+```
+
+## Configuração dos CLIs de nuvem
+
+A CLI delega autenticação e configuração aos comandos oficiais de cada provedor:
+
+```bash
+kubecli cloud login azurecli       # az login
+kubecli cloud configure awscli     # aws configure
+kubecli cloud login googlecli      # gcloud auth login
+kubecli cloud configure googlecli  # gcloud init
+kubecli cloud status awscli
+```
+
+As credenciais continuam sendo gerenciadas pelos próprios CLIs (`az`, `aws` e `gcloud`); o `kubecli` não salva tokens ou senhas.
+
+## Gerenciamento do kubeconfig
+
+Para adicionar um cluster manualmente ao kubeconfig atual:
+
+```bash
+kubecli kubeconfig.add
+# ou
+kubecli kubeconfig add
+```
+
+A CLI pergunta apenas o nome do cluster, a URL da API e o token. O usuário e o contexto são gerados automaticamente com o nome do cluster, o namespace padrão é sempre `default` e o contexto é selecionado ao final.
+
+Para remover um cluster e os contextos associados:
+
+```bash
+kubecli kubeconfig.remove meu-cluster
+# ou
+kubecli kubeconfig remove meu-cluster
+```
+
+A remoção usa o kubeconfig selecionado pelo `kubectl` (incluindo `KUBECONFIG`) e pede confirmação antes de remover os usuários associados. Tokens são armazenados pelo `kubectl` no kubeconfig; use um arquivo protegido e evite versioná-lo.
+
+Também é possível executar diretamente sem instalar a ferramenta:
+
+```bash
+uv run python -m cli.kubecli kubectl get nodes
+```

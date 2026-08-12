@@ -1,0 +1,59 @@
+{
+  "name": "kubecli-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Terminal desktop real para a kubecli",
+  "desktopName": "kubecli-desktop",
+  "author": {
+    "name": "KubeCLI",
+    "email": "dev@kubecli.local"
+  },
+  "homepage": "https://github.com/kubecli/kubecli",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "postinstall": "electron-rebuild -f -w node-pty",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:deb": "electron-builder --linux deb",
+    "dist:rpm": "electron-builder --linux rpm",
+    "dist:linux": "electron-builder --linux deb rpm"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.3.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^36.0.0",
+    "@electron/rebuild": "^4.0.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.kubecli.desktop",
+    "productName": "KubeCLI Desktop",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "scripts/**/*",
+      "assets/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/kubecli-icon.svg",
+      "target": ["dmg"]
+    },
+    "linux": {
+      "category": "Development",
+      "maintainer": "KubeCLI <dev@kubecli.local>",
+      "syncDesktopName": true,
+      "icon": "assets/kubecli-icon.svg",
+      "target": ["deb", "rpm"]
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

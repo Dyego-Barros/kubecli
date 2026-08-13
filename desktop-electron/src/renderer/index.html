@@ -28,13 +28,60 @@
     </div>
   </header>
   <section id="quick-menu" class="quick-menu" hidden>
+    <strong class="action-group-title">Recursos</strong>
     <button data-command="kubectl get pods">Pods</button>
     <button data-command="kubectl get services">Services</button>
     <button data-command="kubectl get deployments">Deployments</button>
     <button data-command="kubectl get events --sort-by=.lastTimestamp">Events</button>
-    <button data-command="kubectl get nodes">Nodes (cluster)</button>
+    <button data-command="kubectl get nodes">Nodes</button>
+    <strong class="action-group-title">Operações</strong>
+    <button data-action="logs">Logs de pod</button>
+    <button data-action="describe">Describe de pod</button>
+    <button data-action="rollout-status">Rollout status</button>
+    <button data-action="rollout-restart">Rollout restart</button>
+    <button data-action="exec">Entrar no pod</button>
+    <button data-action="port-forward">Port-forward</button>
+    <button data-action="scale">Escalar recurso</button>
+    <button data-action="yaml-edit">Editar YAML</button>
+    <strong class="action-group-title">Diagnóstico</strong>
+    <button data-command="kubectl top pods">Uso dos pods</button>
+    <button data-command="kubectl top nodes">Uso dos nodes</button>
+    <button data-command="kubectl cluster-info">Cluster info</button>
+    <button data-command="kubectl get pods -A">Pods de todos namespaces</button>
+    <button data-command="kubectl get events -A --sort-by=.lastTimestamp">Eventos do cluster</button>
+    <button data-command="kubectl auth can-i --list">Permissões atuais</button>
+    <strong class="action-group-title">Ferramentas</strong>
     <button data-command="kubecli list">Ferramentas</button>
     <button data-command="clear">Limpar terminal</button>
+  </section>
+  <section id="action-modal" class="help-modal" hidden>
+    <div class="settings-card action-card">
+      <div class="help-title">
+        <strong id="action-title">Ação</strong>
+        <button id="close-action" type="button">Fechar</button>
+      </div>
+      <form id="action-form" class="settings-content">
+        <label id="action-target-label">Recurso
+          <input id="action-target" required autocomplete="off" placeholder="pod/nome-do-pod ou deployment/app" />
+        </label>
+        <label id="action-command-label">Comando no pod
+          <input id="action-command" value="/bin/sh" autocomplete="off" />
+        </label>
+        <label id="action-local-port-label">Porta local
+          <input id="action-local-port" type="number" min="1" max="65535" placeholder="8080" />
+        </label>
+        <label id="action-remote-port-label">Porta do recurso
+          <input id="action-remote-port" type="number" min="1" max="65535" placeholder="80" />
+        </label>
+        <label id="action-replicas-label">Réplicas
+          <input id="action-replicas" type="number" min="0" placeholder="3" />
+        </label>
+        <label id="action-extra-label">Argumentos adicionais
+          <input id="action-extra" placeholder="-n namespace --tail=100" autocomplete="off" />
+        </label>
+        <div class="settings-actions"><span></span><button type="submit">Executar</button></div>
+      </form>
+    </div>
   </section>
   <section id="kubeconfig-modal" class="help-modal" hidden>
     <div class="settings-card kubeconfig-card">

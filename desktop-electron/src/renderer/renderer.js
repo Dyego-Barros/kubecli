@@ -212,10 +212,58 @@ document.getElementById('quick').addEventListener('click', () => {
   const menu = document.getElementById('quick-menu');
   menu.hidden = !menu.hidden;
 });
+const actionDefinitions = {
+  logs: { title: 'Logs de pod', fields: ['target', 'extra'], command: (v) => `kubecli logs ${v.target}${v.extra}` },
+  describe: { title: 'Describe de pod', fields: ['target', 'extra'], command: (v) => `kubecli describe ${v.target}${v.extra}` },
+  'rollout-status': { title: 'Rollout status', fields: ['target', 'extra'], command: (v) => `kubectl rollout status ${v.target}${v.extra}` },
+  'rollout-restart': { title: 'Rollout restart', fields: ['target', 'extra'], command: (v) => `kubectl rollout restart ${v.target}${v.extra}` },
+  exec: { title: 'Entrar no pod', fields: ['target', 'command', 'extra'], command: (v) => `kubectl exec -it ${v.target} -- ${v.command || '/bin/sh'}${v.extra}` },
+  'port-forward': { title: 'Port-forward', fields: ['target', 'local-port', 'remote-port', 'extra'], command: (v) => `kubectl port-forward ${v.target} ${v.localPort}:${v.remotePort}${v.extra}` },
+  scale: { title: 'Escalar recurso', fields: ['target', 'replicas', 'extra'], command: (v) => `kubectl scale ${v.target} --replicas=${v.replicas}${v.extra}` },
+  'yaml-edit': { title: 'Editar YAML', fields: ['target'], command: (v) => `kubectl edit ${v.target}` },
+};
+function openAction(action) {
+  const definition = actionDefinitions[action];
+  if (!definition) return;
+  document.getElementById('action-title').textContent = definition.title;
+  document.getElementById('action-form').dataset.action = action;
+  ['target', 'command', 'local-port', 'remote-port', 'replicas', 'extra'].forEach((field) => {
+    document.getElementById(`action-${field}-label`).hidden = !definition.fields.includes(field);
+  });
+  document.getElementById('action-form').reset();
+  document.getElementById('action-command').value = '/bin/sh';
+  document.getElementById('action-modal').hidden = false;
+  document.getElementById('action-target').focus();
+}
 document.querySelectorAll('#quick-menu [data-command]').forEach((button) => button.addEventListener('click', () => {
   sendCommand(button.dataset.command);
   document.getElementById('quick-menu').hidden = true;
 }));
+document.querySelectorAll('#quick-menu [data-action]').forEach((button) => button.addEventListener('click', () => {
+  openAction(button.dataset.action);
+  document.getElementById('quick-menu').hidden = true;
+}));
+document.getElementById('close-action').addEventListener('click', () => { document.getElementById('action-modal').hidden = true; });
+document.getElementById('action-modal').addEventListener('click', (event) => {
+  if (event.target.id === 'action-modal') event.currentTarget.hidden = true;
+});
+document.getElementById('action-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const value = (id) => document.getElementById(id).value.trim();
+  const extra = value('action-extra');
+  const definition = actionDefinitions[event.currentTarget.dataset.action];
+  const command = definition.command({
+    target: value('action-target'),
+    command: value('action-command'),
+    localPort: value('action-local-port'),
+    remotePort: value('action-remote-port'),
+    replicas: value('action-replicas'),
+    extra: extra ? ` ${extra}` : '',
+  });
+  if (command.includes('undefined') || (definition.fields.includes('local-port') && (!value('action-local-port') || !value('action-remote-port')))) return;
+  sendCommand(command);
+  document.getElementById('action-modal').hidden = true;
+});
 document.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();

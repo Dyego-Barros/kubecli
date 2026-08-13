@@ -134,6 +134,54 @@ ipcMain.handle('edit-kubeconfig', async () => {
   return { kubeconfig };
 });
 ipcMain.handle('get-kubeconfig', () => kubeconfig);
+function runKubectl(args) {
+  return new Promise((resolve) => {
+    const env = { ...process.env, KUBECONFIG: kubeconfig };
+    execFile('kubectl', args, { env }, (error, stdout, stderr) => resolve({
+      code: error?.code || 0,
+      stdout: stdout?.trim() || '',
+      stderr: stderr?.trim() || '',
+    }));
+  });
+}
+ipcMain.handle('add-kubeconfig-cluster', async (_event, { name, server, token }) => {
+  if (!name || !server || !token) return { code: 1, message: 'Nome, servidor e token são obrigatórios.' };
+  const user = `kubecli-${name}`;
+  const commands = [
+    ['config', 'set-cluster', name, `--server=${server}`],
+    ['config', 'set-credentials', user, `--token=${token}`],
+    ['config', 'set-context', name, `--cluster=${name}`, `--user=${user}`, '--namespace=default'],
+    ['config', 'use-context', name],
+  ];
+  for (const args of commands) {
+    const result = await runKubectl(args);
+    if (result.code) return { code: result.code, message: result.stderr || `Falha ao executar kubectl ${args.join(' ')}` };
+  }
+  return { code: 0, message: `Cluster '${name}' adicionado e selecionado.` };
+});
+ipcMain.handle('remove-kubeconfig-cluster', async (_event, { name, removeUsers }) => {
+  if (!name) return { code: 1, message: 'Nome do cluster é obrigatório.' };
+  const view = await runKubectl(['config', 'view', '--output=json']);
+  if (view.code) return { code: view.code, message: view.stderr || 'Não foi possível ler o kubeconfig.' };
+  let config;
+  try { config = JSON.parse(view.stdout); } catch { return { code: 1, message: 'O kubeconfig não retornou JSON válido.' }; }
+  const contexts = (config.contexts || []).filter((item) => item.context?.cluster === name);
+  const users = [...new Set(contexts.map((item) => item.context?.user).filter(Boolean))];
+  if (!(config.clusters || []).some((item) => item.name === name)) return { code: 1, message: `Cluster '${name}' não encontrado.` };
+  for (const context of contexts) {
+    const result = await runKubectl(['config', 'delete-context', context.name]);
+    if (result.code) return { code: result.code, message: result.stderr || 'Falha ao remover o contexto.' };
+  }
+  const cluster = await runKubectl(['config', 'delete-cluster', name]);
+  if (cluster.code) return { code: cluster.code, message: cluster.stderr || 'Falha ao remover o cluster.' };
+  if (removeUsers) {
+    for (const user of users) {
+      const result = await runKubectl(['config', 'unset', `users.${user}`]);
+      if (result.code) return { code: result.code, message: result.stderr || 'Falha ao remover usuário associado.' };
+    }
+  }
+  return { code: 0, message: `Cluster '${name}' removido.` };
+});
 ipcMain.handle('get-settings', () => ({ ...settings }));
 ipcMain.handle('save-settings', (_event, nextSettings) => {
   settings = { ...defaultSettings, ...settings, ...nextSettings };

@@ -17,8 +17,15 @@
     <button id="quick">Ações</button>
     <button id="settings">Configurações</button>
     <button id="instructions">Instruções</button>
-    <button id="edit">Editar kubeconfig</button>
-    <button id="choose">Escolher kubeconfig</button>
+    <div class="header-menu">
+      <button id="kubeconfig-toggle" type="button" aria-expanded="false">Kubeconfig</button>
+      <div id="kubeconfig-menu" class="header-dropdown" hidden>
+        <button id="edit" type="button">Editar kubeconfig</button>
+        <button id="choose" type="button">Escolher kubeconfig</button>
+        <button id="add-cluster" type="button">Adicionar cluster</button>
+        <button id="remove-cluster" type="button">Remover cluster</button>
+      </div>
+    </div>
   </header>
   <section id="quick-menu" class="quick-menu" hidden>
     <button data-command="kubectl get pods">Pods</button>
@@ -28,6 +35,28 @@
     <button data-command="kubectl get nodes">Nodes (cluster)</button>
     <button data-command="kubecli list">Ferramentas</button>
     <button data-command="clear">Limpar terminal</button>
+  </section>
+  <section id="kubeconfig-modal" class="help-modal" hidden>
+    <div class="settings-card kubeconfig-card">
+      <div class="help-title">
+        <strong id="kubeconfig-modal-title">Kubeconfig</strong>
+        <button id="close-kubeconfig" type="button">Fechar</button>
+      </div>
+      <form id="add-cluster-form" class="settings-content" hidden>
+        <p class="form-description">Cadastre um cluster no kubeconfig atual.</p>
+        <label>Nome do cluster<input id="add-cluster-name" required autocomplete="off" /></label>
+        <label>URL do servidor Kubernetes<input id="add-cluster-server" required placeholder="https://...:6443" autocomplete="off" /></label>
+        <label>Token de acesso<input id="add-cluster-token" required type="password" autocomplete="off" /></label>
+        <div class="settings-actions"><span></span><button type="submit">Adicionar cluster</button></div>
+      </form>
+      <form id="remove-cluster-form" class="settings-content" hidden>
+        <p class="form-description">Remova um cluster e o contexto associado do kubeconfig atual.</p>
+        <label>Nome do cluster<input id="remove-cluster-name" required autocomplete="off" /></label>
+        <label class="check-row"><input id="remove-cluster-users" type="checkbox" /> Remover usuários associados</label>
+        <div class="settings-actions"><span></span><button type="submit">Remover cluster</button></div>
+      </form>
+      <p id="kubeconfig-result" class="form-result" hidden></p>
+    </div>
   </section>
   <section id="settings-modal" class="help-modal" hidden>
     <div class="settings-card">

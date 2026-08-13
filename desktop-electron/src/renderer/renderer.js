@@ -146,6 +146,56 @@ document.getElementById('edit').addEventListener('click', async () => {
   const result = await ipcRenderer.invoke('edit-kubeconfig');
   showConfig(result.kubeconfig);
 });
+function closeKubeconfigMenu() {
+  document.getElementById('kubeconfig-menu').hidden = true;
+  document.getElementById('kubeconfig-toggle').setAttribute('aria-expanded', 'false');
+}
+function openKubeconfigForm(formId, title) {
+  closeKubeconfigMenu();
+  document.getElementById('kubeconfig-modal-title').textContent = title;
+  document.getElementById('add-cluster-form').hidden = formId !== 'add-cluster-form';
+  document.getElementById('remove-cluster-form').hidden = formId !== 'remove-cluster-form';
+  document.getElementById('kubeconfig-result').hidden = true;
+  document.getElementById(formId).reset();
+  document.getElementById('kubeconfig-modal').hidden = false;
+  document.querySelector(`#${formId} input`)?.focus();
+}
+document.getElementById('kubeconfig-toggle').addEventListener('click', (event) => {
+  event.stopPropagation();
+  const menu = document.getElementById('kubeconfig-menu');
+  menu.hidden = !menu.hidden;
+  event.currentTarget.setAttribute('aria-expanded', String(!menu.hidden));
+});
+document.getElementById('add-cluster').addEventListener('click', () => openKubeconfigForm('add-cluster-form', 'Adicionar cluster'));
+document.getElementById('remove-cluster').addEventListener('click', () => openKubeconfigForm('remove-cluster-form', 'Remover cluster'));
+document.getElementById('close-kubeconfig').addEventListener('click', () => { document.getElementById('kubeconfig-modal').hidden = true; });
+document.getElementById('kubeconfig-modal').addEventListener('click', (event) => {
+  if (event.target.id === 'kubeconfig-modal') event.currentTarget.hidden = true;
+});
+document.getElementById('add-cluster-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const result = await ipcRenderer.invoke('add-kubeconfig-cluster', {
+    name: document.getElementById('add-cluster-name').value.trim(),
+    server: document.getElementById('add-cluster-server').value.trim(),
+    token: document.getElementById('add-cluster-token').value.trim(),
+  });
+  showKubeconfigResult(result);
+});
+document.getElementById('remove-cluster-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const result = await ipcRenderer.invoke('remove-kubeconfig-cluster', {
+    name: document.getElementById('remove-cluster-name').value.trim(),
+    removeUsers: document.getElementById('remove-cluster-users').checked,
+  });
+  showKubeconfigResult(result);
+});
+function showKubeconfigResult(result) {
+  const output = document.getElementById('kubeconfig-result');
+  output.textContent = result.message;
+  output.dataset.status = result.code ? 'error' : 'success';
+  output.hidden = false;
+  if (!result.code) updateState();
+}
 document.getElementById('instructions').addEventListener('click', () => {
   document.getElementById('instructions-modal').hidden = false;
 });
@@ -154,6 +204,9 @@ document.getElementById('close-instructions').addEventListener('click', () => {
 });
 document.getElementById('instructions-modal').addEventListener('click', (event) => {
   if (event.target.id === 'instructions-modal') event.currentTarget.hidden = true;
+});
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.header-menu')) closeKubeconfigMenu();
 });
 document.getElementById('quick').addEventListener('click', () => {
   const menu = document.getElementById('quick-menu');

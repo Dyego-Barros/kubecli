@@ -6,7 +6,7 @@ const pty = require('node-pty');
 const { execFile } = require('child_process');
 
 let win;
-let terminal;
+const sessions = new Map();
 const defaultSettings = {
   theme: 'midnight',
   fontColor: '#f1f3f6',
@@ -16,11 +16,48 @@ const defaultSettings = {
   cursorStyle: 'block',
   cursorBlink: true,
   scrollback: 10000,
+  profiles: {},
 };
 let settings = { ...defaultSettings };
 // O padrão do app é sempre o kubeconfig do usuário.
 // Outro arquivo só é usado quando escolhido explicitamente pela interface.
 let kubeconfig = path.join(os.homedir(), '.kube', 'config');
+
+function createSessionKubeconfig(id, source) {
+  if (id === 'main') return { path: source, temporary: false };
+  const target = path.join(app.getPath('temp'), `kubecli-${process.pid}-${id}.yaml`);
+  try {
+    fs.copyFileSync(source, target);
+    return { path: target, temporary: true };
+  } catch {
+    return { path: source, temporary: false };
+  }
+}
+
+function cleanupSession(session) {
+  if (!session?.temporary) return;
+  try { fs.unlinkSync(session.runtimeKubeconfig); } catch {}
+}
+
+function readSessionState(id) {
+  const session = sessions.get(id);
+  if (!session) return Promise.resolve({ context: 'sem-contexto', namespace: 'default' });
+  const env = { ...process.env, KUBECONFIG: session.runtimeKubeconfig };
+  return new Promise((resolve) => {
+    execFile('kubectl', ['config', 'current-context'], { env }, (contextError, contextStdout) => {
+      const context = contextError ? 'sem-contexto' : (contextStdout.trim() || 'sem-contexto');
+      execFile('kubectl', ['config', 'view', '--minify', '-o', 'jsonpath={.contexts[0].context.namespace}'], { env }, (_namespaceError, namespaceStdout) => {
+        resolve({ context, namespace: namespaceStdout?.trim() || 'default' });
+      });
+    });
+  });
+}
+
+function publishSessionState(id) {
+  readSessionState(id).then((state) => {
+    win?.webContents.send('terminal-state', { id, state });
+  });
+}
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
 function loadSettings() {
@@ -92,22 +129,36 @@ function createWindow() {
       nodeIntegration: true,
     },
   });
-  win.webContents.once('did-finish-load', startTerminal);
+  win.webContents.once('did-finish-load', () => startTerminal('main', kubeconfig));
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.on('resize', () => win.webContents.send('terminal-resize'));
-  win.on('closed', () => { if (terminal) terminal.kill(); win = null; });
+  win.on('closed', () => {
+    sessions.forEach((session) => {
+      session.pty.kill();
+      cleanupSession(session);
+    });
+    sessions.clear();
+    win = null;
+  });
 }
 
-function startTerminal() {
+function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
   if (process.platform === 'win32') {
-    win?.webContents.send('terminal-error', 'Esta versão suporta somente macOS e Linux.');
+    win?.webContents.send('terminal-error', { id, message: 'Esta versão suporta somente macOS e Linux.' });
     return;
   }
+  const previous = sessions.get(id);
+  if (previous) {
+    previous.pty.kill();
+    cleanupSession(previous);
+    sessions.delete(id);
+  }
+  const isolated = createSessionKubeconfig(id, sessionKubeconfig);
   const shellPath = process.platform === 'darwin' ? '/bin/zsh' : (fs.existsSync('/bin/zsh') ? '/bin/zsh' : '/bin/bash');
-  const env = { ...process.env, KUBECONFIG: kubeconfig };
+  const env = { ...process.env, KUBECONFIG: isolated.path };
   if (process.platform !== 'win32') env.TERM = 'xterm-256color';
+  let session;
   try {
-    terminal = pty.spawn(shellPath, ['-l'], {
+    session = pty.spawn(shellPath, ['-l'], {
       name: 'xterm-256color',
       cols: 120,
       rows: 32,
@@ -116,36 +167,79 @@ function startTerminal() {
       env,
     });
   } catch (error) {
-    win?.webContents.send('terminal-error', String(error));
+    win?.webContents.send('terminal-error', { id, message: String(error) });
     return;
   }
-  terminal.write(shellInit(shellPath));
-  terminal.onData((data) => win?.webContents.send('terminal-data', data));
-  terminal.onExit(({ exitCode }) => win?.webContents.send('terminal-exit', exitCode));
-  win.webContents.send('terminal-config', { kubeconfig, settings });
+  sessions.set(id, {
+    pty: session,
+    kubeconfig: sessionKubeconfig,
+    runtimeKubeconfig: isolated.path,
+    temporary: isolated.temporary,
+  });
+  session.write(shellInit(shellPath));
+  session.onData((data) => {
+    const output = String(data);
+    win?.webContents.send('terminal-data', { id, data: output });
+    if (output.includes('\u001b]777;KUBECLI_READY\u0007')) publishSessionState(id);
+  });
+  session.onExit(({ exitCode }) => {
+    if (sessions.get(id)?.pty !== session) return;
+    const finished = sessions.get(id);
+    sessions.delete(id);
+    cleanupSession(finished);
+    win?.webContents.send('terminal-exit', { id, code: exitCode });
+  });
+  win.webContents.send('terminal-config', {
+    id,
+    kubeconfig: sessionKubeconfig,
+    runtimeKubeconfig: isolated.path,
+    settings,
+  });
+  publishSessionState(id);
 }
 
-ipcMain.on('terminal-input', (_event, data) => terminal?.write(data));
-ipcMain.on('terminal-resize', (_event, { cols, rows }) => terminal?.resize(cols, rows));
-ipcMain.handle('choose-kubeconfig', async () => {
+ipcMain.on('terminal-input', (_event, { id = 'main', data = '' } = {}) => sessions.get(id)?.pty.write(String(data)));
+ipcMain.on('terminal-resize', (_event, { id = 'main', cols, rows } = {}) => {
+  if (cols && rows) sessions.get(id)?.pty.resize(Number(cols), Number(rows));
+});
+ipcMain.on('terminal-stop', (_event, id = 'main') => sessions.get(id)?.pty.write('\u0003'));
+ipcMain.handle('create-terminal', (_event, { id, kubeconfig: sessionKubeconfig } = {}) => {
+  const tabId = id || `tab-${Date.now()}`;
+  startTerminal(tabId, sessionKubeconfig || kubeconfig);
+  return { id: tabId, kubeconfig: sessionKubeconfig || kubeconfig };
+});
+ipcMain.handle('close-terminal', (_event, id) => {
+  if (!id || id === 'main') return { code: 1, message: 'A aba principal não pode ser fechada.' };
+  const session = sessions.get(id);
+  if (!session) return { code: 1, message: 'Sessão não encontrada.' };
+  session.pty.kill();
+  sessions.delete(id);
+  cleanupSession(session);
+  return { code: 0 };
+});
+ipcMain.handle('choose-kubeconfig', async (_event, { id = 'main' } = {}) => {
   const result = await dialog.showOpenDialog(win, {
     title: 'Escolher kubeconfig',
     defaultPath: path.join(os.homedir(), '.kube'),
     properties: ['openFile'],
   });
-  if (result.canceled || !result.filePaths[0]) return { kubeconfig };
-  kubeconfig = result.filePaths[0];
-  if (terminal) terminal.kill();
-  startTerminal();
-  return { kubeconfig };
+  if (result.canceled || !result.filePaths[0]) {
+    return { kubeconfig: sessions.get(id)?.kubeconfig || kubeconfig };
+  }
+  const selectedKubeconfig = result.filePaths[0];
+  if (id === 'main') kubeconfig = selectedKubeconfig;
+  sessions.get(id)?.pty.kill();
+  startTerminal(id, selectedKubeconfig);
+  return { kubeconfig: selectedKubeconfig, id };
 });
-ipcMain.handle('edit-kubeconfig', async () => {
-  if (!fs.existsSync(kubeconfig)) fs.mkdirSync(path.dirname(kubeconfig), { recursive: true });
-  if (!fs.existsSync(kubeconfig)) fs.writeFileSync(kubeconfig, '');
-  await shell.openPath(kubeconfig);
-  return { kubeconfig };
+ipcMain.handle('edit-kubeconfig', async (_event, { id = 'main' } = {}) => {
+  const currentKubeconfig = sessions.get(id)?.kubeconfig || kubeconfig;
+  if (!fs.existsSync(currentKubeconfig)) fs.mkdirSync(path.dirname(currentKubeconfig), { recursive: true });
+  if (!fs.existsSync(currentKubeconfig)) fs.writeFileSync(currentKubeconfig, '');
+  await shell.openPath(currentKubeconfig);
+  return { kubeconfig: currentKubeconfig, id };
 });
-ipcMain.handle('get-kubeconfig', () => kubeconfig);
+ipcMain.handle('get-kubeconfig', (_event, { id = 'main' } = {}) => sessions.get(id)?.kubeconfig || kubeconfig);
 ipcMain.handle('save-alias', (_event, { name, command, args }) => {
   const aliasName = String(name || '').trim();
   const baseCommand = String(command || '').trim();
@@ -219,21 +313,44 @@ ipcMain.handle('save-settings', (_event, nextSettings) => {
   saveSettings();
   return { ...settings };
 });
+ipcMain.handle('save-profile', (_event, { name, profileSettings = {} }) => {
+  const profileName = String(name || '').trim();
+  if (!profileName) return { code: 1, message: 'Informe um nome para o perfil.' };
+  const { profiles = {}, ...visualSettings } = settings;
+  const savedSettings = { ...visualSettings, ...profileSettings };
+  delete savedSettings.profiles;
+  settings.profiles = { ...profiles, [profileName]: savedSettings };
+  saveSettings();
+  return { code: 0, message: `Perfil '${profileName}' salvo.`, settings: { ...settings } };
+});
+ipcMain.handle('delete-profile', (_event, name) => {
+  const profileName = String(name || '').trim();
+  const profiles = { ...(settings.profiles || {}) };
+  if (!profiles[profileName]) return { code: 1, message: 'Perfil não encontrado.' };
+  delete profiles[profileName];
+  settings.profiles = profiles;
+  saveSettings();
+  return { code: 0, message: `Perfil '${profileName}' removido.`, settings: { ...settings } };
+});
+ipcMain.handle('apply-profile', (_event, name) => {
+  const profileName = String(name || '').trim();
+  const profile = settings.profiles?.[profileName];
+  if (!profile) return { code: 1, message: 'Perfil não encontrado.' };
+  settings = { ...defaultSettings, ...settings, ...profile, profiles: settings.profiles };
+  saveSettings();
+  return {
+    code: 0,
+    message: `Perfil '${profileName}' aplicado.`,
+    profile: { ...defaultSettings, ...profile },
+    settings: { ...settings },
+  };
+});
 ipcMain.handle('reset-settings', () => {
   settings = { ...defaultSettings };
   saveSettings();
   return { ...settings };
 });
-ipcMain.handle('get-kube-state', () => new Promise((resolve) => {
-  const env = { ...process.env, KUBECONFIG: kubeconfig };
-  const shellPath = process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash';
-  execFile(shellPath, ['-lc', 'kubectl config current-context'], { env }, (contextError, contextStdout) => {
-    const context = contextError ? 'sem-contexto' : (contextStdout.trim() || 'sem-contexto');
-    execFile(shellPath, ['-lc', "kubectl config view --minify -o jsonpath='{.contexts[0].context.namespace}'"], { env }, (_namespaceError, namespaceStdout) => {
-      resolve({ context, namespace: namespaceStdout?.trim() || 'default' });
-    });
-  });
-}));
+ipcMain.handle('get-kube-state', (_event, { id = 'main' } = {}) => readSessionState(id));
 
 app.whenReady().then(() => { loadSettings(); createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

@@ -1,6 +1,6 @@
 {
   "name": "kubecli-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Terminal desktop real para a kubecli",
   "desktopName": "kubecli-desktop",

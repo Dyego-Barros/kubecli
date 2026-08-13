@@ -188,6 +188,13 @@ kubecli aliases remove meus-pods
 
 Os aliases personalizados são salvos em `~/.config/kubecli/aliases.json`. Os aliases padrão não podem ser removidos.
 
+Para disponibilizar aliases personalizados como comandos diretos no shell atual,
+recarregue a integração depois de cadastrá-los:
+
+```bash
+eval "$(kubecli shell-init zsh)"
+```
+
 ```bash
 kubecli k get pods -A       # kubectl
 kubecli po -n monitoring    # kubectl get pods -n monitoring

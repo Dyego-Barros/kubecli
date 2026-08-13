@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
+
+try:
+    from .aliases import _custom_aliases
+except ImportError:
+    from aliases import _custom_aliases
 
 
 def current_location() -> tuple[str, str] | None:
@@ -34,6 +40,11 @@ def show_prompt() -> int:
 
 def shell_init(shell: str) -> int:
     """Gera integração para atualizar o prompt antes de cada comando."""
+    custom_aliases = [
+        f"alias {name}='kubecli {name}'"
+        for name in _custom_aliases()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", name)
+    ]
     if shell == "zsh":
         print("""# kubecli Kubernetes prompt
 if [[ -z \"${KUBECLI_PROMPT_ENABLED:-}\" ]]; then
@@ -51,6 +62,8 @@ if [[ -z \"${KUBECLI_PROMPT_ENABLED:-}\" ]]; then
   autoload -Uz add-zsh-hook
   add-zsh-hook precmd _kubecli_prompt
 fi""")
+        if custom_aliases:
+            print("\n# kubecli custom aliases\n" + "\n".join(custom_aliases))
     elif shell == "bash":
         print("""# kubecli Kubernetes prompt
 if [[ -z \"${KUBECLI_PROMPT_ENABLED:-}\" ]]; then
@@ -63,6 +76,8 @@ if [[ -z \"${KUBECLI_PROMPT_ENABLED:-}\" ]]; then
   }
   PROMPT_COMMAND=\"_kubecli_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"
 fi""")
+        if custom_aliases:
+            print("\n# kubecli custom aliases\n" + "\n".join(custom_aliases))
     else:
         print(f"Shell não suportado: {shell}. Use zsh ou bash.")
         return 1

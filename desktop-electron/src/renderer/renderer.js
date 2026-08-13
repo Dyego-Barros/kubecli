@@ -19,40 +19,139 @@ const terminalTheme = {
   brightWhite: '#ffffff',
 };
 
-const terminal = new Terminal({
-  cursorBlink: true,
-  convertEol: true,
-  fontFamily: 'Menlo, Monaco, monospace',
-  fontSize: 14,
-  lineHeight: 1.28,
-  scrollback: 10000,
-  theme: terminalTheme,
-});
-const fit = new FitAddon();
-let commandRunning = false;
+const sessions = new Map();
+let activeSessionId = 'main';
 let currentSettings;
 const themes = {
   midnight: { background: '#35435a', cursor: '#b7bdc7', selectionBackground: '#52627b' },
   light: { background: '#f4f5f7', cursor: '#20262f', selectionBackground: '#b9cbe3' },
   contrast: { background: '#000000', cursor: '#ffff00', selectionBackground: '#555555' },
 };
-terminal.loadAddon(fit);
-terminal.open(document.getElementById('terminal'));
-// Reaplica após o canvas ser criado: o xterm renderiza o fundo no próprio canvas.
-terminal.options.theme = terminalTheme;
-
 function applySettings(settings) {
   currentSettings = { ...settings };
   const theme = themes[settings.theme] || themes.midnight;
-  terminal.options.theme = { ...terminalTheme, ...theme, foreground: settings.fontColor || (settings.theme === 'light' ? '#20262f' : '#f1f3f6') };
-  terminal.options.fontFamily = settings.fontFamily;
-  terminal.options.fontSize = Number(settings.fontSize);
-  terminal.options.lineHeight = Number(settings.lineHeight);
-  terminal.options.cursorStyle = settings.cursorStyle;
-  terminal.options.cursorBlink = Boolean(settings.cursorBlink);
-  terminal.options.scrollback = Number(settings.scrollback);
+  sessions.forEach(({ terminal }) => {
+    terminal.options.theme = { ...terminalTheme, ...theme, foreground: settings.fontColor || (settings.theme === 'light' ? '#20262f' : '#f1f3f6') };
+    terminal.options.fontFamily = settings.fontFamily;
+    terminal.options.fontSize = Number(settings.fontSize);
+    terminal.options.lineHeight = Number(settings.lineHeight);
+    terminal.options.cursorStyle = settings.cursorStyle;
+    terminal.options.cursorBlink = Boolean(settings.cursorBlink);
+    terminal.options.scrollback = Number(settings.scrollback);
+  });
   document.body.dataset.theme = settings.theme;
   resize();
+}
+
+function activeSession() { return sessions.get(activeSessionId); }
+
+function resize() {
+  const session = activeSession();
+  if (!session) return;
+  session.fit.fit();
+  ipcRenderer.send('terminal-resize', { id: activeSessionId, cols: session.terminal.cols, rows: session.terminal.rows });
+}
+
+function renderTabs() {
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = '';
+  sessions.forEach((session, id) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = `terminal-tab${id === activeSessionId ? ' active' : ''}`;
+    tab.dataset.tabId = id;
+    tab.textContent = session.label;
+    if (id !== 'main') {
+      const close = document.createElement('span');
+      close.className = 'tab-close';
+      close.textContent = '×';
+      close.title = 'Fechar aba';
+      close.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        await closeSession(id);
+      });
+      tab.appendChild(close);
+    }
+    tab.addEventListener('click', () => switchSession(id));
+    tabs.appendChild(tab);
+  });
+}
+
+function switchSession(id) {
+  if (!sessions.has(id)) return;
+  activeSessionId = id;
+  sessions.forEach((session, sessionId) => {
+    session.element.hidden = sessionId !== id;
+  });
+  renderTabs();
+  resize();
+  activeSession().terminal.focus();
+  showConfig(activeSession().kubeconfig);
+  renderState(activeSession().state);
+  updateState(id);
+}
+
+function createSession(id, label, sessionKubeconfig = '') {
+  if (sessions.has(id)) return sessions.get(id);
+  const element = document.createElement('div');
+  element.className = 'terminal-session';
+  element.dataset.sessionId = id;
+  document.getElementById('terminals').appendChild(element);
+  const terminal = new Terminal({
+    cursorBlink: true,
+    convertEol: true,
+    fontFamily: 'Menlo, Monaco, monospace',
+    fontSize: 14,
+    lineHeight: 1.28,
+    scrollback: 10000,
+    theme: terminalTheme,
+  });
+  const fit = new FitAddon();
+  terminal.loadAddon(fit);
+  terminal.open(element);
+  const session = {
+    id, label, element, terminal, fit, kubeconfig: sessionKubeconfig, runtimeKubeconfig: sessionKubeconfig,
+    commandRunning: false,
+    state: { context: 'sem-contexto', namespace: 'default' },
+  };
+  sessions.set(id, session);
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (!session.commandRunning) return true;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') return true;
+    return false;
+  });
+  terminal.onData((data) => {
+    if (session.commandRunning) {
+      if (data === '\u0003') ipcRenderer.send('terminal-input', { id, data });
+      return;
+    }
+    if (data.includes('\r')) session.commandRunning = true;
+    ipcRenderer.send('terminal-input', { id, data });
+  });
+  if (currentSettings) applySettings(currentSettings);
+  renderTabs();
+  return session;
+}
+
+async function closeSession(id) {
+  if (id === 'main' || !sessions.has(id)) return;
+  const result = await ipcRenderer.invoke('close-terminal', id);
+  if (result.code) return;
+  const session = sessions.get(id);
+  session.terminal.dispose();
+  session.element.remove();
+  sessions.delete(id);
+  if (activeSessionId === id) activeSessionId = 'main';
+  switchSession(activeSessionId);
+}
+
+async function createTab(label = '') {
+  const id = `tab-${Date.now()}`;
+  const tabLabel = label.trim() || `Terminal ${sessions.size + 1}`;
+  const source = activeSession()?.runtimeKubeconfig || activeSession()?.kubeconfig;
+  createSession(id, tabLabel, source || '');
+  await ipcRenderer.invoke('create-terminal', { id, kubeconfig: source });
+  switchSession(id);
 }
 
 function openSettings(selectedProfile = '') {
@@ -85,22 +184,18 @@ function showProfileStatus(result) {
   status.hidden = false;
 }
 
-function resize() {
-  fit.fit();
-  ipcRenderer.send('terminal-resize', { cols: terminal.cols, rows: terminal.rows });
-}
-
 function sendCommand(command) {
-  if (commandRunning) return;
+  const session = activeSession();
+  if (!session || session.commandRunning) return;
   if (command === 'clear') {
-    terminal.clear();
-    terminal.scrollToBottom();
+    session.terminal.clear();
+    session.terminal.scrollToBottom();
     return;
   }
   const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
   localStorage.setItem(historyKey, JSON.stringify([command, ...history.filter((item) => item !== command)].slice(0, 100)));
-  commandRunning = true;
-  ipcRenderer.send('terminal-input', `${command}\r`);
+  session.commandRunning = true;
+  ipcRenderer.send('terminal-input', { id: activeSessionId, data: `${command}\r` });
 }
 
 function renderHistory() {
@@ -120,11 +215,19 @@ function openHistory() {
   document.getElementById('history-modal').hidden = false;
 }
 
-function updateState() {
-  ipcRenderer.invoke('get-kube-state').then(({ context, namespace }) => {
-    document.getElementById('context').textContent = context;
-    document.getElementById('namespace').textContent = namespace;
+function updateState(id = activeSessionId) {
+  const requestedId = id;
+  ipcRenderer.invoke('get-kube-state', { id }).then((state) => {
+    const session = sessions.get(requestedId);
+    if (!session) return;
+    session.state = state;
+    if (requestedId === activeSessionId) renderState(state);
   });
+}
+
+function renderState(state) {
+  document.getElementById('context').textContent = state?.context || 'sem-contexto';
+  document.getElementById('namespace').textContent = state?.namespace || 'default';
 }
 
 function showConfig(path) {
@@ -149,42 +252,39 @@ function closeOverlays() {
   document.getElementById('kubeconfig-toggle')?.setAttribute('aria-expanded', 'false');
 }
 
-terminal.attachCustomKeyEventHandler((event) => {
-  if (!commandRunning) return true;
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') return true;
-  return false;
+ipcRenderer.on('terminal-data', (_event, { id, data }) => {
+  const session = sessions.get(id);
+  if (!session) return;
+  session.terminal.write(data);
+  if (session.commandRunning && data.includes('\u001b]777;KUBECLI_READY\u0007')) session.commandRunning = false;
+  if (data.includes('\u001b]777;KUBECLI_READY\u0007') && id === activeSessionId) updateState(id);
 });
-
-terminal.onData((data) => {
-  if (commandRunning) {
-    if (data === '\u0003') ipcRenderer.send('terminal-input', data);
-    return;
-  }
-  if (data.includes('\r')) commandRunning = true;
-  ipcRenderer.send('terminal-input', data);
-});
-
-ipcRenderer.on('terminal-data', (_event, data) => {
-  terminal.write(data);
-  if (commandRunning && data.includes('\u001b]777;KUBECLI_READY\u0007')) commandRunning = false;
-  if (data.includes('\u001b]777;KUBECLI_READY\u0007')) updateState();
+ipcRenderer.on('terminal-state', (_event, { id, state }) => {
+  const session = sessions.get(id);
+  if (!session) return;
+  session.state = state;
+  if (id === activeSessionId) renderState(state);
 });
 ipcRenderer.on('terminal-config', (_event, data) => {
-  showConfig(data.kubeconfig);
+  const session = createSession(data.id, data.id === 'main' ? 'Terminal 1' : `Terminal ${sessions.size + 1}`, data.kubeconfig);
+  session.kubeconfig = data.kubeconfig;
+  session.runtimeKubeconfig = data.runtimeKubeconfig || data.kubeconfig;
+  if (data.id === activeSessionId) showConfig(data.kubeconfig);
   if (data.settings) applySettings(data.settings);
-  commandRunning = false;
+  session.commandRunning = false;
   resize();
 });
-ipcRenderer.on('terminal-exit', (_event, code) => terminal.write(`\r\n[processo encerrado: ${code}]\r\n`));
-ipcRenderer.on('terminal-error', (_event, message) => terminal.write(`\r\n[erro ao iniciar terminal: ${message}]\r\n`));
+ipcRenderer.on('terminal-exit', (_event, { id, code }) => sessions.get(id)?.terminal.write(`\r\n[processo encerrado: ${code}]\r\n`));
+ipcRenderer.on('terminal-error', (_event, { id, message }) => sessions.get(id)?.terminal.write(`\r\n[erro ao iniciar terminal: ${message}]\r\n`));
 window.addEventListener('resize', resize);
 
 document.getElementById('choose').addEventListener('click', async () => {
-  const result = await ipcRenderer.invoke('choose-kubeconfig');
+  const result = await ipcRenderer.invoke('choose-kubeconfig', { id: activeSessionId });
   showConfig(result.kubeconfig);
+  updateState(activeSessionId);
 });
 document.getElementById('edit').addEventListener('click', async () => {
-  const result = await ipcRenderer.invoke('edit-kubeconfig');
+  const result = await ipcRenderer.invoke('edit-kubeconfig', { id: activeSessionId });
   showConfig(result.kubeconfig);
 });
 function closeKubeconfigMenu() {
@@ -273,23 +373,24 @@ const actionDefinitions = {
   'yaml-edit': { title: 'Editar YAML', fields: ['target'], command: (v) => `kubectl edit ${v.target}` },
   'alias-add': { title: 'Cadastrar alias', fields: ['alias-name', 'alias-command', 'alias-args'], command: (v) => `kubecli aliases add ${v.aliasName} ${v.aliasCommand}${v.aliasArgs ? ` ${v.aliasArgs}` : ''}` },
   'alias-remove': { title: 'Remover alias', fields: ['alias-name'], command: (v) => `kubecli aliases remove ${v.aliasName}` },
+  'new-tab': { title: 'Nova aba', fields: ['tab-name'], command: () => '' },
 };
 function openAction(action) {
   const definition = actionDefinitions[action];
   if (!definition) return;
   document.getElementById('action-title').textContent = definition.title;
   document.getElementById('action-form').dataset.action = action;
-  ['target', 'command', 'local-port', 'remote-port', 'replicas', 'extra', 'alias-name', 'alias-command', 'alias-args'].forEach((field) => {
+  ['target', 'command', 'local-port', 'remote-port', 'replicas', 'extra', 'alias-name', 'alias-command', 'alias-args', 'tab-name'].forEach((field) => {
     const visible = definition.fields.includes(field);
     document.getElementById(`action-${field}-label`).hidden = !visible;
     const input = document.getElementById(`action-${field}`);
-    if (input) input.required = visible && ['target', 'local-port', 'remote-port', 'replicas', 'alias-name'].includes(field);
+    if (input) input.required = visible && ['target', 'local-port', 'remote-port', 'replicas', 'alias-name', 'tab-name'].includes(field);
   });
   document.getElementById('action-form').reset();
   document.getElementById('action-command').value = '/bin/sh';
   document.getElementById('action-result').hidden = true;
   document.getElementById('action-modal').hidden = false;
-  document.getElementById('action-target').focus();
+  document.querySelector('#action-form label:not([hidden]) input, #action-form label:not([hidden]) select')?.focus();
 }
 document.querySelectorAll('#quick-menu [data-command]').forEach((button) => button.addEventListener('click', () => {
   sendCommand(button.dataset.command);
@@ -319,7 +420,13 @@ document.getElementById('action-form').addEventListener('submit', (event) => {
     aliasName: value('action-alias-name'),
     aliasCommand: value('action-alias-command'),
     aliasArgs: value('action-alias-args'),
+    tabName: value('action-tab-name'),
   };
+  if (action === 'new-tab') {
+    createTab(values.tabName);
+    document.getElementById('action-modal').hidden = true;
+    return;
+  }
   if (action === 'alias-add' || action === 'alias-remove') {
     const request = action === 'alias-add'
       ? ipcRenderer.invoke('save-alias', { name: values.aliasName, command: values.aliasCommand, args: values.aliasArgs })
@@ -334,7 +441,7 @@ document.getElementById('action-form').addEventListener('submit', (event) => {
         const shellCommand = action === 'alias-add'
           ? `alias ${name}='kubecli ${name}'`
           : `unalias ${name} 2>/dev/null`;
-        ipcRenderer.send('terminal-input', `${shellCommand}\r`);
+        ipcRenderer.send('terminal-input', { id: activeSessionId, data: `${shellCommand}\r` });
       }
     }).catch((error) => {
       const output = document.getElementById('action-result');
@@ -350,6 +457,16 @@ document.getElementById('action-form').addEventListener('submit', (event) => {
   document.getElementById('action-modal').hidden = true;
 });
 document.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 't') {
+    event.preventDefault();
+    openAction('new-tab');
+    return;
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
+    event.preventDefault();
+    closeSession(activeSessionId);
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'h') {
     event.preventDefault();
     openHistory();
@@ -438,6 +555,7 @@ document.getElementById('reset-settings').addEventListener('click', async () => 
 });
 setInterval(updateState, 1500);
 
+createSession('main', 'Terminal 1');
 resize();
 updateState();
 ipcRenderer.invoke('get-settings').then(applySettings);

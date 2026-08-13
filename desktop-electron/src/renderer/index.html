@@ -54,6 +54,8 @@
     <strong class="action-group-title">Ferramentas</strong>
     <button data-action="alias-add">Cadastrar alias</button>
     <button data-action="alias-remove">Remover alias</button>
+    <strong class="action-group-title">Sessões</strong>
+    <button data-action="new-tab">Nova aba</button>
     <button data-command="kubecli list">Ferramentas</button>
     <button data-command="clear">Limpar terminal</button>
   </section>
@@ -109,6 +111,9 @@
         <label id="action-alias-args-label">Argumentos fixos
           <input id="action-alias-args" placeholder="get pods -A" autocomplete="off" />
         </label>
+        <label id="action-tab-name-label">Nome da aba
+          <input id="action-tab-name" placeholder="Desenvolvimento, Homologação ou Produção" autocomplete="off" />
+        </label>
         <div class="settings-actions"><span></span><button type="submit">Executar</button></div>
         <p id="action-result" class="form-result" hidden></p>
       </form>
@@ -143,6 +148,15 @@
         <button id="close-settings" type="button">Fechar</button>
       </div>
       <form id="settings-form" class="settings-content">
+        <label>Perfil salvo
+          <select id="setting-profile"><option value="">Configurações atuais</option></select>
+        </label>
+        <div class="profile-actions">
+          <input id="setting-profile-name" placeholder="Nome do perfil" autocomplete="off" />
+          <button id="save-profile" type="button">Salvar perfil</button>
+          <button id="delete-profile" type="button">Excluir perfil</button>
+        </div>
+        <p id="profile-status" class="form-result" hidden></p>
         <label>Tema
           <select id="setting-theme">
             <option value="midnight">Midnight</option>
@@ -264,6 +278,8 @@
 
         <h3>Atalhos do desktop</h3>
         <code>⌘K</code><span>Abre a paleta de comandos</span>
+        <code>⌘T</code><span>Abre uma nova aba</span>
+        <code>⌘W</code><span>Fecha a aba atual</span>
         <code>Ctrl+C</code><span>Interrompe o comando atual</span>
         <code>clear</code><span>Limpa o terminal</span>
         <code>Enter</code><span>Executa o comando digitado</span>
@@ -274,7 +290,8 @@
     <input id="palette-input" placeholder="Digite um comando ou ação..." autocomplete="off" />
     <div id="palette-results"></div>
   </section>
-  <main id="terminal"></main>
+  <nav id="tabs" class="tabs" aria-label="Abas do terminal"></nav>
+  <main id="terminals"></main>
   <script src="./renderer.js"></script>
 </body>
 </html>

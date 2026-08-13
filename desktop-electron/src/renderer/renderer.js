@@ -221,17 +221,23 @@ const actionDefinitions = {
   'port-forward': { title: 'Port-forward', fields: ['target', 'local-port', 'remote-port', 'extra'], command: (v) => `kubectl port-forward ${v.target} ${v.localPort}:${v.remotePort}${v.extra}` },
   scale: { title: 'Escalar recurso', fields: ['target', 'replicas', 'extra'], command: (v) => `kubectl scale ${v.target} --replicas=${v.replicas}${v.extra}` },
   'yaml-edit': { title: 'Editar YAML', fields: ['target'], command: (v) => `kubectl edit ${v.target}` },
+  'alias-add': { title: 'Cadastrar alias', fields: ['alias-name', 'alias-command', 'alias-args'], command: (v) => `kubecli aliases add ${v.aliasName} ${v.aliasCommand}${v.aliasArgs ? ` ${v.aliasArgs}` : ''}` },
+  'alias-remove': { title: 'Remover alias', fields: ['alias-name'], command: (v) => `kubecli aliases remove ${v.aliasName}` },
 };
 function openAction(action) {
   const definition = actionDefinitions[action];
   if (!definition) return;
   document.getElementById('action-title').textContent = definition.title;
   document.getElementById('action-form').dataset.action = action;
-  ['target', 'command', 'local-port', 'remote-port', 'replicas', 'extra'].forEach((field) => {
-    document.getElementById(`action-${field}-label`).hidden = !definition.fields.includes(field);
+  ['target', 'command', 'local-port', 'remote-port', 'replicas', 'extra', 'alias-name', 'alias-command', 'alias-args'].forEach((field) => {
+    const visible = definition.fields.includes(field);
+    document.getElementById(`action-${field}-label`).hidden = !visible;
+    const input = document.getElementById(`action-${field}`);
+    if (input) input.required = visible && ['target', 'local-port', 'remote-port', 'replicas', 'alias-name'].includes(field);
   });
   document.getElementById('action-form').reset();
   document.getElementById('action-command').value = '/bin/sh';
+  document.getElementById('action-result').hidden = true;
   document.getElementById('action-modal').hidden = false;
   document.getElementById('action-target').focus();
 }
@@ -252,14 +258,43 @@ document.getElementById('action-form').addEventListener('submit', (event) => {
   const value = (id) => document.getElementById(id).value.trim();
   const extra = value('action-extra');
   const definition = actionDefinitions[event.currentTarget.dataset.action];
-  const command = definition.command({
+  const action = event.currentTarget.dataset.action;
+  const values = {
     target: value('action-target'),
     command: value('action-command'),
     localPort: value('action-local-port'),
     remotePort: value('action-remote-port'),
     replicas: value('action-replicas'),
     extra: extra ? ` ${extra}` : '',
-  });
+    aliasName: value('action-alias-name'),
+    aliasCommand: value('action-alias-command'),
+    aliasArgs: value('action-alias-args'),
+  };
+  if (action === 'alias-add' || action === 'alias-remove') {
+    const request = action === 'alias-add'
+      ? ipcRenderer.invoke('save-alias', { name: values.aliasName, command: values.aliasCommand, args: values.aliasArgs })
+      : ipcRenderer.invoke('remove-alias', { name: values.aliasName });
+    request.then((result) => {
+      const output = document.getElementById('action-result');
+      output.textContent = result.message;
+      output.dataset.status = result.code ? 'error' : 'success';
+      output.hidden = false;
+      if (!result.code) {
+        const name = values.aliasName;
+        const shellCommand = action === 'alias-add'
+          ? `alias ${name}='kubecli ${name}'`
+          : `unalias ${name} 2>/dev/null`;
+        ipcRenderer.send('terminal-input', `${shellCommand}\r`);
+      }
+    }).catch((error) => {
+      const output = document.getElementById('action-result');
+      output.textContent = `Erro ao salvar alias: ${error}`;
+      output.dataset.status = 'error';
+      output.hidden = false;
+    });
+    return;
+  }
+  const command = definition.command(values);
   if (command.includes('undefined') || (definition.fields.includes('local-port') && (!value('action-local-port') || !value('action-remote-port')))) return;
   sendCommand(command);
   document.getElementById('action-modal').hidden = true;

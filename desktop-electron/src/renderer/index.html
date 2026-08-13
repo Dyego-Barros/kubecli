@@ -51,6 +51,8 @@
     <button data-command="kubectl get events -A --sort-by=.lastTimestamp">Eventos do cluster</button>
     <button data-command="kubectl auth can-i --list">Permissões atuais</button>
     <strong class="action-group-title">Ferramentas</strong>
+    <button data-action="alias-add">Cadastrar alias</button>
+    <button data-action="alias-remove">Remover alias</button>
     <button data-command="kubecli list">Ferramentas</button>
     <button data-command="clear">Limpar terminal</button>
   </section>
@@ -79,7 +81,23 @@
         <label id="action-extra-label">Argumentos adicionais
           <input id="action-extra" placeholder="-n namespace --tail=100" autocomplete="off" />
         </label>
+        <label id="action-alias-name-label">Nome do alias
+          <input id="action-alias-name" placeholder="kgpo" autocomplete="off" />
+        </label>
+        <label id="action-alias-command-label">Comando base
+          <select id="action-alias-command">
+            <option value="kubectl">kubectl</option>
+            <option value="kubecli">kubecli</option>
+            <option value="kubens">kubens</option>
+            <option value="kubectx">kubectx</option>
+            <option value="oc">oc</option>
+          </select>
+        </label>
+        <label id="action-alias-args-label">Argumentos fixos
+          <input id="action-alias-args" placeholder="get pods -A" autocomplete="off" />
+        </label>
         <div class="settings-actions"><span></span><button type="submit">Executar</button></div>
+        <p id="action-result" class="form-result" hidden></p>
       </form>
     </div>
   </section>

@@ -30,8 +30,19 @@ function saveSettings() {
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
   fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
 }
+function aliasesPath() { return path.join(os.homedir(), '.config', 'kubecli', 'aliases.json'); }
+function readCustomAliases() {
+  try { return JSON.parse(fs.readFileSync(aliasesPath(), 'utf8')); } catch { return {}; }
+}
+function writeCustomAliases(aliases) {
+  fs.mkdirSync(path.dirname(aliasesPath()), { recursive: true });
+  fs.writeFileSync(aliasesPath(), JSON.stringify(aliases, null, 2) + '\n');
+}
 
 function shellInit(shellPath) {
+  const customAliases = Object.keys(readCustomAliases())
+    .filter((name) => /^[A-Za-z_][A-Za-z0-9_-]*$/.test(name))
+    .map((name) => `alias ${name}='kubecli ${name}'`);
   const common = [
     "alias k='kubectl'",
     "alias kc='kubectl'",
@@ -48,6 +59,7 @@ function shellInit(shellPath) {
     "alias install='kubecli install'",
     "alias uninstall='kubecli uninstall'",
     "alias kubeconfig='kubecli kubeconfig'",
+    ...customAliases,
     "clear",
   ];
   if (shellPath.endsWith('/zsh')) {
@@ -134,6 +146,25 @@ ipcMain.handle('edit-kubeconfig', async () => {
   return { kubeconfig };
 });
 ipcMain.handle('get-kubeconfig', () => kubeconfig);
+ipcMain.handle('save-alias', (_event, { name, command, args }) => {
+  const aliasName = String(name || '').trim();
+  const baseCommand = String(command || '').trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(aliasName)) return { code: 1, message: 'Nome de alias inválido.' };
+  if (['aliases', 'cloud', 'kubeconfig', 'kubectl', 'kubens', 'kubectx', 'oc'].includes(aliasName)) return { code: 1, message: 'Esse nome é reservado.' };
+  if (!['kubectl', 'kubecli', 'kubens', 'kubectx', 'oc'].includes(baseCommand)) return { code: 1, message: 'Comando base inválido.' };
+  const aliases = readCustomAliases();
+  aliases[aliasName] = { command: baseCommand, args: String(args || '').trim().split(/\s+/).filter(Boolean) };
+  writeCustomAliases(aliases);
+  return { code: 0, message: `Alias '${aliasName}' cadastrado.` };
+});
+ipcMain.handle('remove-alias', (_event, { name }) => {
+  const aliasName = String(name || '').trim();
+  const aliases = readCustomAliases();
+  if (!Object.prototype.hasOwnProperty.call(aliases, aliasName)) return { code: 1, message: `Alias '${aliasName}' não encontrado.` };
+  delete aliases[aliasName];
+  writeCustomAliases(aliases);
+  return { code: 0, message: `Alias '${aliasName}' removido.` };
+});
 function runKubectl(args) {
   return new Promise((resolve) => {
     const env = { ...process.env, KUBECONFIG: kubeconfig };

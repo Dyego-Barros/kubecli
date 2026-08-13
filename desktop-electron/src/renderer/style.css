@@ -40,6 +40,11 @@ button:hover { background: #3c4a5f; border-color: #53647d; }
 .check-row { display: flex !important; align-items: center; }
 .check-row input { accent-color: #69d391; }
 .settings-actions { display: flex; justify-content: space-between; gap: 8px; padding-top: 4px; }
+.history-card { width: min(760px, 88vw); }
+.history-actions { display: flex; gap: 6px; }
+.history-list { display: grid; gap: 6px; max-height: 62vh; overflow: auto; padding: 16px; }
+.history-item { width: 100%; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.history-empty { margin: 0; color: #b9c3d1; }
 .kubeconfig-card { width: min(580px, 88vw); }
 .form-description { margin: 0; color: #b9c3d1; line-height: 1.45; }
 .form-result { margin: 0; padding: 0 18px 18px; line-height: 1.4; }

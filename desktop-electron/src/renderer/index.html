@@ -15,6 +15,7 @@
     <span id="namespace" class="namespace" title="Namespace atual">default</span>
     <span id="config" title="Kubeconfig atual"></span>
     <button id="quick">Ações</button>
+    <button id="history">Histórico</button>
     <button id="settings">Configurações</button>
     <button id="instructions">Instruções</button>
     <div class="header-menu">
@@ -55,6 +56,18 @@
     <button data-action="alias-remove">Remover alias</button>
     <button data-command="kubecli list">Ferramentas</button>
     <button data-command="clear">Limpar terminal</button>
+  </section>
+  <section id="history-modal" class="help-modal" hidden>
+    <div class="settings-card history-card">
+      <div class="help-title">
+        <strong>Histórico de comandos</strong>
+        <div class="history-actions">
+          <button id="clear-history" type="button">Limpar</button>
+          <button id="close-history" type="button">Fechar</button>
+        </div>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </div>
   </section>
   <section id="action-modal" class="help-modal" hidden>
     <div class="settings-card action-card">

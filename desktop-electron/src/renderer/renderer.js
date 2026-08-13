@@ -6,6 +6,7 @@ const actions = [
   ['Deployments', 'kubectl get deployments'], ['Events', 'kubectl get events --sort-by=.lastTimestamp'],
   ['Nodes (cluster)', 'kubectl get nodes'], ['Ferramentas', 'kubecli list'], ['Limpar terminal', 'clear'],
 ];
+const historyKey = 'kubecli-command-history';
 
 const terminalTheme = {
   background: '#35435a',
@@ -81,8 +82,27 @@ function sendCommand(command) {
     terminal.scrollToBottom();
     return;
   }
+  const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+  localStorage.setItem(historyKey, JSON.stringify([command, ...history.filter((item) => item !== command)].slice(0, 100)));
   commandRunning = true;
   ipcRenderer.send('terminal-input', `${command}\r`);
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+  list.innerHTML = history.length
+    ? history.map((command) => `<button class="history-item" data-command="${command.replaceAll('"', '&quot;')}">${command}</button>`).join('')
+    : '<p class="history-empty">Nenhum comando executado ainda.</p>';
+  list.querySelectorAll('[data-command]').forEach((item) => item.addEventListener('click', () => {
+    sendCommand(item.dataset.command);
+    document.getElementById('history-modal').hidden = true;
+  }));
+}
+
+function openHistory() {
+  renderHistory();
+  document.getElementById('history-modal').hidden = false;
 }
 
 function updateState() {
@@ -212,6 +232,15 @@ document.getElementById('quick').addEventListener('click', () => {
   const menu = document.getElementById('quick-menu');
   menu.hidden = !menu.hidden;
 });
+document.getElementById('history').addEventListener('click', openHistory);
+document.getElementById('close-history').addEventListener('click', () => { document.getElementById('history-modal').hidden = true; });
+document.getElementById('history-modal').addEventListener('click', (event) => {
+  if (event.target.id === 'history-modal') event.currentTarget.hidden = true;
+});
+document.getElementById('clear-history').addEventListener('click', () => {
+  localStorage.removeItem(historyKey);
+  renderHistory();
+});
 const actionDefinitions = {
   logs: { title: 'Logs de pod', fields: ['target', 'extra'], command: (v) => `kubecli logs ${v.target}${v.extra}` },
   describe: { title: 'Describe de pod', fields: ['target', 'extra'], command: (v) => `kubecli describe ${v.target}${v.extra}` },
@@ -300,6 +329,11 @@ document.getElementById('action-form').addEventListener('submit', (event) => {
   document.getElementById('action-modal').hidden = true;
 });
 document.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'h') {
+    event.preventDefault();
+    openHistory();
+    return;
+  }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
     const palette = document.getElementById('command-palette');

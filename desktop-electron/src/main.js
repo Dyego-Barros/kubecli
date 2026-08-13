@@ -7,9 +7,29 @@ const { execFile } = require('child_process');
 
 let win;
 let terminal;
+const defaultSettings = {
+  theme: 'midnight',
+  fontColor: '#f1f3f6',
+  fontFamily: 'Menlo, Monaco, monospace',
+  fontSize: 14,
+  lineHeight: 1.28,
+  cursorStyle: 'block',
+  cursorBlink: true,
+  scrollback: 10000,
+};
+let settings = { ...defaultSettings };
 // O padrão do app é sempre o kubeconfig do usuário.
 // Outro arquivo só é usado quando escolhido explicitamente pela interface.
 let kubeconfig = path.join(os.homedir(), '.kube', 'config');
+
+function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
+function loadSettings() {
+  try { settings = { ...defaultSettings, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) }; } catch { settings = { ...defaultSettings }; }
+}
+function saveSettings() {
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
+}
 
 function shellInit(shellPath) {
   const common = [
@@ -90,7 +110,7 @@ function startTerminal() {
   terminal.write(shellInit(shellPath));
   terminal.onData((data) => win?.webContents.send('terminal-data', data));
   terminal.onExit(({ exitCode }) => win?.webContents.send('terminal-exit', exitCode));
-  win.webContents.send('terminal-config', { kubeconfig });
+  win.webContents.send('terminal-config', { kubeconfig, settings });
 }
 
 ipcMain.on('terminal-input', (_event, data) => terminal?.write(data));
@@ -114,6 +134,17 @@ ipcMain.handle('edit-kubeconfig', async () => {
   return { kubeconfig };
 });
 ipcMain.handle('get-kubeconfig', () => kubeconfig);
+ipcMain.handle('get-settings', () => ({ ...settings }));
+ipcMain.handle('save-settings', (_event, nextSettings) => {
+  settings = { ...defaultSettings, ...settings, ...nextSettings };
+  saveSettings();
+  return { ...settings };
+});
+ipcMain.handle('reset-settings', () => {
+  settings = { ...defaultSettings };
+  saveSettings();
+  return { ...settings };
+});
 ipcMain.handle('get-kube-state', () => new Promise((resolve) => {
   const env = { ...process.env, KUBECONFIG: kubeconfig };
   const shellPath = process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash';
@@ -125,5 +156,5 @@ ipcMain.handle('get-kube-state', () => new Promise((resolve) => {
   });
 }));
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => { loadSettings(); createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

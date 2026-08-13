@@ -15,6 +15,7 @@
     <span id="namespace" class="namespace" title="Namespace atual">default</span>
     <span id="config" title="Kubeconfig atual"></span>
     <button id="quick">Ações</button>
+    <button id="settings">Configurações</button>
     <button id="instructions">Instruções</button>
     <button id="edit">Editar kubeconfig</button>
     <button id="choose">Escolher kubeconfig</button>
@@ -27,6 +28,55 @@
     <button data-command="kubectl get nodes">Nodes (cluster)</button>
     <button data-command="kubecli list">Ferramentas</button>
     <button data-command="clear">Limpar terminal</button>
+  </section>
+  <section id="settings-modal" class="help-modal" hidden>
+    <div class="settings-card">
+      <div class="help-title">
+        <strong>Configurações do terminal</strong>
+        <button id="close-settings" type="button">Fechar</button>
+      </div>
+      <form id="settings-form" class="settings-content">
+        <label>Tema
+          <select id="setting-theme">
+            <option value="midnight">Midnight</option>
+            <option value="light">Claro</option>
+            <option value="contrast">Alto contraste</option>
+          </select>
+        </label>
+        <label>Cor da fonte
+          <input id="setting-font-color" type="color" />
+        </label>
+        <label>Fonte
+          <select id="setting-font-family">
+            <option>Menlo, Monaco, monospace</option>
+            <option>SFMono-Regular, Menlo, Monaco, monospace</option>
+            <option>Fira Code, Menlo, Monaco, monospace</option>
+            <option>monospace</option>
+          </select>
+        </label>
+        <label>Tamanho da fonte <output id="font-size-output">14 px</output>
+          <input id="setting-font-size" type="range" min="11" max="24" step="1" />
+        </label>
+        <label>Espaçamento entre linhas <output id="line-height-output">1.28</output>
+          <input id="setting-line-height" type="range" min="1" max="1.8" step="0.01" />
+        </label>
+        <label>Cursor
+          <select id="setting-cursor-style">
+            <option value="block">Bloco</option>
+            <option value="underline">Sublinhado</option>
+            <option value="bar">Barra</option>
+          </select>
+        </label>
+        <label class="check-row"><input id="setting-cursor-blink" type="checkbox" /> Cursor piscando</label>
+        <label>Linhas de rolagem
+          <input id="setting-scrollback" type="number" min="100" max="50000" step="100" />
+        </label>
+        <div class="settings-actions">
+          <button id="reset-settings" type="button">Restaurar padrão</button>
+          <button type="submit">Salvar</button>
+        </div>
+      </form>
+    </div>
   </section>
   <section id="instructions-modal" class="help-modal" hidden>
     <div class="help-card">

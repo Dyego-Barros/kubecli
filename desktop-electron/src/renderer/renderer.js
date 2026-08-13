@@ -29,10 +29,45 @@ const terminal = new Terminal({
 });
 const fit = new FitAddon();
 let commandRunning = false;
+let currentSettings;
+const themes = {
+  midnight: { background: '#35435a', cursor: '#b7bdc7', selectionBackground: '#52627b' },
+  light: { background: '#f4f5f7', cursor: '#20262f', selectionBackground: '#b9cbe3' },
+  contrast: { background: '#000000', cursor: '#ffff00', selectionBackground: '#555555' },
+};
 terminal.loadAddon(fit);
 terminal.open(document.getElementById('terminal'));
 // Reaplica após o canvas ser criado: o xterm renderiza o fundo no próprio canvas.
 terminal.options.theme = terminalTheme;
+
+function applySettings(settings) {
+  currentSettings = { ...settings };
+  const theme = themes[settings.theme] || themes.midnight;
+  terminal.options.theme = { ...terminalTheme, ...theme, foreground: settings.fontColor || (settings.theme === 'light' ? '#20262f' : '#f1f3f6') };
+  terminal.options.fontFamily = settings.fontFamily;
+  terminal.options.fontSize = Number(settings.fontSize);
+  terminal.options.lineHeight = Number(settings.lineHeight);
+  terminal.options.cursorStyle = settings.cursorStyle;
+  terminal.options.cursorBlink = Boolean(settings.cursorBlink);
+  terminal.options.scrollback = Number(settings.scrollback);
+  document.body.dataset.theme = settings.theme;
+  resize();
+}
+
+function openSettings() {
+  const settings = currentSettings;
+  document.getElementById('setting-theme').value = settings.theme;
+  document.getElementById('setting-font-color').value = settings.fontColor;
+  document.getElementById('setting-font-family').value = settings.fontFamily;
+  document.getElementById('setting-font-size').value = settings.fontSize;
+  document.getElementById('font-size-output').textContent = `${settings.fontSize} px`;
+  document.getElementById('setting-line-height').value = settings.lineHeight;
+  document.getElementById('line-height-output').textContent = settings.lineHeight;
+  document.getElementById('setting-cursor-style').value = settings.cursorStyle;
+  document.getElementById('setting-cursor-blink').checked = settings.cursorBlink;
+  document.getElementById('setting-scrollback').value = settings.scrollback;
+  document.getElementById('settings-modal').hidden = false;
+}
 
 function resize() {
   fit.fit();
@@ -95,6 +130,7 @@ ipcRenderer.on('terminal-data', (_event, data) => {
 });
 ipcRenderer.on('terminal-config', (_event, data) => {
   showConfig(data.kubeconfig);
+  if (data.settings) applySettings(data.settings);
   commandRunning = false;
   resize();
 });
@@ -137,7 +173,38 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closePalette();
 });
 document.getElementById('palette-input').addEventListener('input', (event) => renderPalette(event.target.value));
+document.getElementById('settings').addEventListener('click', openSettings);
+document.getElementById('close-settings').addEventListener('click', () => { document.getElementById('settings-modal').hidden = true; });
+document.getElementById('settings-modal').addEventListener('click', (event) => {
+  if (event.target.id === 'settings-modal') event.currentTarget.hidden = true;
+});
+document.getElementById('setting-font-size').addEventListener('input', (event) => {
+  document.getElementById('font-size-output').textContent = `${event.target.value} px`;
+});
+document.getElementById('setting-line-height').addEventListener('input', (event) => {
+  document.getElementById('line-height-output').textContent = event.target.value;
+});
+document.getElementById('settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const next = {
+    theme: document.getElementById('setting-theme').value,
+    fontColor: document.getElementById('setting-font-color').value,
+    fontFamily: document.getElementById('setting-font-family').value,
+    fontSize: Number(document.getElementById('setting-font-size').value),
+    lineHeight: Number(document.getElementById('setting-line-height').value),
+    cursorStyle: document.getElementById('setting-cursor-style').value,
+    cursorBlink: document.getElementById('setting-cursor-blink').checked,
+    scrollback: Number(document.getElementById('setting-scrollback').value),
+  };
+  applySettings(await ipcRenderer.invoke('save-settings', next));
+  document.getElementById('settings-modal').hidden = true;
+});
+document.getElementById('reset-settings').addEventListener('click', async () => {
+  applySettings(await ipcRenderer.invoke('reset-settings'));
+  openSettings();
+});
 setInterval(updateState, 1500);
 
 resize();
 updateState();
+ipcRenderer.invoke('get-settings').then(applySettings);

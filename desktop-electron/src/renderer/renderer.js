@@ -55,8 +55,17 @@ function applySettings(settings) {
   resize();
 }
 
-function openSettings() {
+function openSettings(selectedProfile = '') {
   const settings = currentSettings;
+  const profileSelect = document.getElementById('setting-profile');
+  profileSelect.innerHTML = '<option value="">Configurações atuais</option>';
+  Object.keys(settings.profiles || {}).forEach((name) => {
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = name;
+    profileSelect.appendChild(option);
+  });
+  profileSelect.value = selectedProfile;
   document.getElementById('setting-theme').value = settings.theme;
   document.getElementById('setting-font-color').value = settings.fontColor;
   document.getElementById('setting-font-family').value = settings.fontFamily;
@@ -68,6 +77,12 @@ function openSettings() {
   document.getElementById('setting-cursor-blink').checked = settings.cursorBlink;
   document.getElementById('setting-scrollback').value = settings.scrollback;
   document.getElementById('settings-modal').hidden = false;
+}
+function showProfileStatus(result) {
+  const status = document.getElementById('profile-status');
+  status.textContent = result.message;
+  status.dataset.status = result.code ? 'error' : 'success';
+  status.hidden = false;
 }
 
 function resize() {
@@ -127,6 +142,12 @@ function renderPalette(filter = '') {
 }
 
 function closePalette() { document.getElementById('command-palette').hidden = true; }
+
+function closeOverlays() {
+  ['quick-menu', 'kubeconfig-menu', 'command-palette', 'history-modal', 'action-modal', 'settings-modal', 'instructions-modal', 'kubeconfig-modal']
+    .forEach((id) => { const element = document.getElementById(id); if (element) element.hidden = true; });
+  document.getElementById('kubeconfig-toggle')?.setAttribute('aria-expanded', 'false');
+}
 
 terminal.attachCustomKeyEventHandler((event) => {
   if (!commandRunning) return true;
@@ -340,7 +361,10 @@ document.addEventListener('keydown', (event) => {
     palette.hidden = !palette.hidden;
     if (!palette.hidden) { renderPalette(); document.getElementById('palette-input').focus(); }
   }
-  if (event.key === 'Escape') closePalette();
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeOverlays();
+  }
 });
 document.getElementById('palette-input').addEventListener('input', (event) => renderPalette(event.target.value));
 document.getElementById('settings').addEventListener('click', openSettings);
@@ -368,6 +392,45 @@ document.getElementById('settings-form').addEventListener('submit', async (event
   };
   applySettings(await ipcRenderer.invoke('save-settings', next));
   document.getElementById('settings-modal').hidden = true;
+});
+document.getElementById('setting-profile').addEventListener('change', async (event) => {
+  const profileName = event.target.value;
+  if (!profileName) return;
+  const result = await ipcRenderer.invoke('apply-profile', profileName);
+  if (result.code) return showProfileStatus(result);
+  const applied = { ...result.profile, profiles: result.settings.profiles };
+  currentSettings = applied;
+  applySettings(applied);
+  showProfileStatus(result);
+  openSettings(profileName);
+});
+document.getElementById('save-profile').addEventListener('click', async () => {
+  const name = document.getElementById('setting-profile-name').value.trim();
+  const profileSettings = {
+    theme: document.getElementById('setting-theme').value,
+    fontColor: document.getElementById('setting-font-color').value,
+    fontFamily: document.getElementById('setting-font-family').value,
+    fontSize: Number(document.getElementById('setting-font-size').value),
+    lineHeight: Number(document.getElementById('setting-line-height').value),
+    cursorStyle: document.getElementById('setting-cursor-style').value,
+    cursorBlink: document.getElementById('setting-cursor-blink').checked,
+    scrollback: Number(document.getElementById('setting-scrollback').value),
+  };
+  const result = await ipcRenderer.invoke('save-profile', { name, profileSettings });
+  if (result.code) return showProfileStatus(result);
+  currentSettings = result.settings;
+  showProfileStatus(result);
+  document.getElementById('setting-profile-name').value = '';
+  openSettings(name);
+});
+document.getElementById('delete-profile').addEventListener('click', async () => {
+  const name = document.getElementById('setting-profile').value;
+  if (!name) return;
+  const result = await ipcRenderer.invoke('delete-profile', name);
+  if (result.code) return showProfileStatus(result);
+  currentSettings = result.settings;
+  showProfileStatus(result);
+  openSettings();
 });
 document.getElementById('reset-settings').addEventListener('click', async () => {
   applySettings(await ipcRenderer.invoke('reset-settings'));

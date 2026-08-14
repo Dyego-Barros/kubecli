@@ -14,6 +14,10 @@
     <span class="divider">|</span>
     <span id="namespace" class="namespace" title="Namespace atual">default</span>
     <span id="config" title="Kubeconfig atual"></span>
+    <button id="ai" title="Iniciar troubleshooting com IA">IA</button>
+    <button id="ai-settings" title="Configurar APIs e modelos de IA">Config IA</button>
+    <button id="mcp-settings" title="Configurar servidores MCP">MCP</button>
+    <span id="agent-name" class="context" title="AGENTS.md da aba atual">nenhum</span>
     <button id="quick">Ações</button>
     <button id="history">Histórico</button>
     <button id="settings">Configurações</button>
@@ -196,6 +200,32 @@
           <button id="reset-settings" type="button">Restaurar padrão</button>
           <button type="submit">Salvar</button>
         </div>
+      </form>
+    </div>
+  </section>
+  <section id="ai-settings-modal" class="help-modal" hidden>
+    <div class="settings-card ai-settings-card">
+      <div class="help-title">
+        <strong>Configuração de IA</strong>
+        <button id="close-ai-settings" type="button">Fechar</button>
+      </div>
+      <form id="ai-settings-form" class="settings-content">
+        <p class="form-description">Configure até três modelos em ordem de fallback. Tokens são armazenados criptografados e nunca são exibidos.</p>
+        <div id="ai-model-fields"></div>
+        <div class="settings-actions"><span id="ai-settings-result" class="form-result" hidden></span><button type="submit">Salvar configuração</button></div>
+      </form>
+    </div>
+  </section>
+  <section id="mcp-settings-modal" class="help-modal" hidden>
+    <div class="settings-card ai-settings-card">
+      <div class="help-title">
+        <strong>Servidores MCP</strong>
+        <button id="close-mcp-settings" type="button">Fechar</button>
+      </div>
+      <form id="mcp-settings-form" class="settings-content">
+        <p class="form-description">Configure servidores MCP locais ou HTTP. Variáveis sensíveis são criptografadas e nunca exibidas.</p>
+        <div id="mcp-server-fields"></div>
+        <div class="settings-actions"><span id="mcp-settings-result" class="form-result" hidden></span><button type="submit">Salvar MCP</button></div>
       </form>
     </div>
   </section>

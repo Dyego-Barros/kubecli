@@ -87,6 +87,7 @@ function switchSession(id) {
   resize();
   activeSession().terminal.focus();
   showConfig(activeSession().kubeconfig);
+  showAgent(activeSession().agentPath);
   renderState(activeSession().state);
   updateState(id);
 }
@@ -113,6 +114,8 @@ function createSession(id, label, sessionKubeconfig = '') {
     id, label, element, terminal, fit, kubeconfig: sessionKubeconfig, runtimeKubeconfig: sessionKubeconfig,
     commandRunning: false,
     state: { context: 'sem-contexto', namespace: 'default' },
+    agentPath: null,
+    aiSession: null,
   };
   sessions.set(id, session);
   terminal.attachCustomKeyEventHandler((event) => {
@@ -125,12 +128,29 @@ function createSession(id, label, sessionKubeconfig = '') {
       if (data === '\u0003') ipcRenderer.send('terminal-input', { id, data });
       return;
     }
-    if (data.includes('\r')) session.commandRunning = true;
-    ipcRenderer.send('terminal-input', { id, data });
+    const pastedContinuation = /\\(?:\r\n|\r|\n)/.test(data);
+    let terminalInput = data;
+    if (pastedContinuation) {
+      terminalInput = data.replace(/\\(?:\r\n|\r|\n)/g, ' ');
+      if (!terminalInput.endsWith('\r') && !terminalInput.endsWith('\n')) terminalInput += '\r';
+    }
+    if (terminalInput.includes('\r')) session.commandRunning = true;
+    ipcRenderer.send('terminal-input', { id, data: terminalInput });
   });
   if (currentSettings) applySettings(currentSettings);
   renderTabs();
   return session;
+}
+
+function showAgent(agentPath) {
+  const element = document.getElementById('agent-name');
+  if (!element) return;
+  element.textContent = agentPath ? agentPath.split('/').pop() : 'nenhum';
+  element.title = agentPath || 'Nenhum AGENTS.md selecionado para esta aba';
+}
+
+function shellQuote(value) {
+  return `'${String(value || '').replaceAll("'", "'\\''")}'`;
 }
 
 async function closeSession(id) {
@@ -247,7 +267,7 @@ function renderPalette(filter = '') {
 function closePalette() { document.getElementById('command-palette').hidden = true; }
 
 function closeOverlays() {
-  ['quick-menu', 'kubeconfig-menu', 'command-palette', 'history-modal', 'action-modal', 'settings-modal', 'instructions-modal', 'kubeconfig-modal']
+  ['quick-menu', 'kubeconfig-menu', 'command-palette', 'history-modal', 'action-modal', 'settings-modal', 'instructions-modal', 'kubeconfig-modal', 'ai-settings-modal', 'mcp-settings-modal']
     .forEach((id) => { const element = document.getElementById(id); if (element) element.hidden = true; });
   document.getElementById('kubeconfig-toggle')?.setAttribute('aria-expanded', 'false');
 }
@@ -269,10 +289,21 @@ ipcRenderer.on('terminal-config', (_event, data) => {
   const session = createSession(data.id, data.id === 'main' ? 'Terminal 1' : `Terminal ${sessions.size + 1}`, data.kubeconfig);
   session.kubeconfig = data.kubeconfig;
   session.runtimeKubeconfig = data.runtimeKubeconfig || data.kubeconfig;
-  if (data.id === activeSessionId) showConfig(data.kubeconfig);
+  session.agentPath = data.agentPath || null;
+  session.aiSession = data.aiSession || null;
+  if (data.id === activeSessionId) {
+    showConfig(data.kubeconfig);
+    showAgent(session.agentPath);
+  }
   if (data.settings) applySettings(data.settings);
   session.commandRunning = false;
   resize();
+});
+ipcRenderer.on('ai-config', (_event, data) => {
+  const session = sessions.get(data.id);
+  if (!session) return;
+  session.agentPath = data.agentPath || null;
+  if (data.id === activeSessionId) showAgent(session.agentPath);
 });
 ipcRenderer.on('terminal-exit', (_event, { id, code }) => sessions.get(id)?.terminal.write(`\r\n[processo encerrado: ${code}]\r\n`));
 ipcRenderer.on('terminal-error', (_event, { id, message }) => sessions.get(id)?.terminal.write(`\r\n[erro ao iniciar terminal: ${message}]\r\n`));
@@ -282,6 +313,138 @@ document.getElementById('choose').addEventListener('click', async () => {
   const result = await ipcRenderer.invoke('choose-kubeconfig', { id: activeSessionId });
   showConfig(result.kubeconfig);
   updateState(activeSessionId);
+});
+document.getElementById('ai').addEventListener('click', async () => {
+  const session = activeSession();
+  if (!session) return;
+  if (!session.agentPath) {
+    const selected = await ipcRenderer.invoke('choose-agent', { id: activeSessionId });
+    if (selected.error || !selected.agentPath) return;
+    session.agentPath = selected.agentPath;
+    session.aiSession = selected.aiSession;
+    showAgent(session.agentPath);
+  }
+  const request = window.prompt('Descreva o problema para o agente:');
+  if (!request?.trim()) return;
+  const state = session.state || {};
+  const command = [
+    'kubecli ai',
+    '--session', shellQuote(session.aiSession),
+    'ask', '--agent', shellQuote(session.agentPath),
+    '--context', shellQuote(state.context || ''),
+    '--namespace', shellQuote(state.namespace || 'default'),
+    shellQuote(request.trim()),
+  ].join(' ');
+  sendCommand(command);
+});
+function renderAiSettings(settings) {
+  const container = document.getElementById('ai-model-fields');
+  container.innerHTML = '';
+  (settings.models || []).forEach((model, index) => {
+    const block = document.createElement('section');
+    block.className = 'ai-model-block';
+    block.innerHTML = `
+      <h3>Modelo ${index + 1} ${model.tokenConfigured ? '· token configurado' : '· token ausente'}</h3>
+      <div class="ai-model-grid">
+        <label>Nome<input data-ai-field="name" value="${escapeHtml(model.name)}" autocomplete="off" /></label>
+        <label>Provedor<input data-ai-field="provider" value="${escapeHtml(model.provider)}" placeholder="openai, anthropic ou ollama" autocomplete="off" /></label>
+        <label>Modelo<input data-ai-field="model" value="${escapeHtml(model.model)}" autocomplete="off" /></label>
+        <label>Variável da API<input data-ai-field="apiKeyEnv" value="${escapeHtml(model.apiKeyEnv)}" placeholder="OPENAI_API_KEY" autocomplete="off" /></label>
+        <label>Endpoint<input data-ai-field="baseUrl" value="${escapeHtml(model.baseUrl)}" placeholder="opcional" autocomplete="off" /></label>
+        <label>Novo token<input data-ai-field="token" type="password" placeholder="deixe vazio para manter o token salvo" autocomplete="new-password" /></label>
+      </div>`;
+    container.appendChild(block);
+  });
+}
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+}
+async function openAiSettings() {
+  try {
+    const settings = await ipcRenderer.invoke('get-ai-settings');
+    renderAiSettings(settings);
+    document.getElementById('ai-settings-result').hidden = true;
+    document.getElementById('ai-settings-modal').hidden = false;
+  } catch (error) { window.alert(`Não foi possível abrir a configuração de IA: ${error.message || error}`); }
+}
+document.getElementById('ai-settings').addEventListener('click', openAiSettings);
+document.getElementById('close-ai-settings').addEventListener('click', () => { document.getElementById('ai-settings-modal').hidden = true; });
+document.getElementById('ai-settings-modal').addEventListener('click', (event) => {
+  if (event.target.id === 'ai-settings-modal') event.currentTarget.hidden = true;
+});
+document.getElementById('ai-settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const models = [...document.querySelectorAll('.ai-model-block')].map((block) => {
+    const result = {};
+    block.querySelectorAll('[data-ai-field]').forEach((field) => { result[field.dataset.aiField] = field.value.trim(); });
+    return result;
+  });
+  const result = await ipcRenderer.invoke('save-ai-settings', { models });
+  const output = document.getElementById('ai-settings-result');
+  output.textContent = result.code ? result.message : 'Configuração salva com segurança.';
+  output.dataset.status = result.code ? 'error' : 'success';
+  output.hidden = false;
+  if (!result.code) setTimeout(() => { document.getElementById('ai-settings-modal').hidden = true; }, 700);
+});
+function renderMcpSettings(settings) {
+  const container = document.getElementById('mcp-server-fields');
+  container.innerHTML = '';
+  const servers = settings.mcpServers?.length ? settings.mcpServers : [{ name: '', transport: 'stdio', command: '', args: '', url: '', enabled: true, envConfigured: false }];
+  servers.forEach((server, index) => {
+    const block = document.createElement('section');
+    block.className = 'mcp-server-block';
+    block.innerHTML = `
+      <h3>Servidor MCP ${index + 1} ${server.envConfigured ? '· credenciais configuradas' : ''}</h3>
+      <div class="ai-model-grid">
+        <label>Nome<input data-mcp-field="name" value="${escapeHtml(server.name)}" placeholder="kubernetes" autocomplete="off" /></label>
+        <label>Transporte<select data-mcp-field="transport"><option value="stdio" ${server.transport === 'stdio' ? 'selected' : ''}>stdio</option><option value="streamable_http" ${server.transport === 'streamable_http' ? 'selected' : ''}>streamable_http</option><option value="sse" ${server.transport === 'sse' ? 'selected' : ''}>sse</option></select></label>
+        <label>Comando<input data-mcp-field="command" value="${escapeHtml(server.command)}" placeholder="npx" autocomplete="off" /></label>
+        <label>Argumentos<input data-mcp-field="args" value="${escapeHtml(server.args)}" placeholder="-y servidor-mcp" autocomplete="off" /></label>
+        <label>URL<input data-mcp-field="url" value="${escapeHtml(server.url)}" placeholder="http://localhost:3000/mcp" autocomplete="off" /></label>
+        <label>Variáveis sensíveis (JSON)<input data-mcp-field="envJson" type="password" placeholder="deixe vazio para manter" autocomplete="new-password" /></label>
+        <label class="check-row"><input data-mcp-field="enabled" type="checkbox" ${server.enabled !== false ? 'checked' : ''} /> Habilitado</label>
+      </div>`;
+    container.appendChild(block);
+  });
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.textContent = 'Adicionar servidor';
+  add.addEventListener('click', () => {
+    const current = collectMcpSettings();
+    current.push({ name: '', transport: 'stdio', command: '', args: '', url: '', enabled: true, envJson: '' });
+    renderMcpSettings({ mcpServers: current });
+  });
+  container.appendChild(add);
+}
+function collectMcpSettings() {
+  return [...document.querySelectorAll('.mcp-server-block')].map((block) => {
+    const result = {};
+    block.querySelectorAll('[data-mcp-field]').forEach((field) => { result[field.dataset.mcpField] = field.type === 'checkbox' ? field.checked : field.value.trim(); });
+    return result;
+  }).filter((server) => server.name || server.command || server.url);
+}
+async function openMcpSettings() {
+  try {
+    const settings = await ipcRenderer.invoke('get-ai-settings');
+    renderMcpSettings(settings);
+    document.getElementById('mcp-settings-result').hidden = true;
+    document.getElementById('mcp-settings-modal').hidden = false;
+  } catch (error) { window.alert(`Não foi possível abrir a configuração MCP: ${error.message || error}`); }
+}
+document.getElementById('mcp-settings').addEventListener('click', openMcpSettings);
+document.getElementById('close-mcp-settings').addEventListener('click', () => { document.getElementById('mcp-settings-modal').hidden = true; });
+document.getElementById('mcp-settings-modal').addEventListener('click', (event) => {
+  if (event.target.id === 'mcp-settings-modal') event.currentTarget.hidden = true;
+});
+document.getElementById('mcp-settings-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const current = await ipcRenderer.invoke('get-ai-settings');
+  const result = await ipcRenderer.invoke('save-ai-settings', { models: current.models, mcpServers: collectMcpSettings() });
+  const output = document.getElementById('mcp-settings-result');
+  output.textContent = result.code ? result.message : 'Servidores MCP salvos com segurança.';
+  output.dataset.status = result.code ? 'error' : 'success';
+  output.hidden = false;
+  if (!result.code) setTimeout(() => { document.getElementById('mcp-settings-modal').hidden = true; }, 700);
 });
 document.getElementById('edit').addEventListener('click', async () => {
   const result = await ipcRenderer.invoke('edit-kubeconfig', { id: activeSessionId });

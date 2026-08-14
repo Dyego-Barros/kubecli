@@ -1,7 +1,10 @@
+ai
+ai_entry
 aliases
 cloud
 installation
 kubecli
+kubecli_desktop
 kubeconfig
 prompt
 runtime

@@ -239,6 +239,61 @@ O botão **Escolher kubeconfig** permite selecionar outro arquivo.
 
 ## Ajuda
 
+## Troubleshooting com IA
+
+A CLI permite selecionar um `AGENTS.md` por usuário e iniciar uma sessão de diagnóstico.
+Os modelos configurados são usados em ordem: quando o primeiro atinge quota, limite ou
+rate limit, a solicitação passa para o próximo, sem chamadas simultâneas.
+
+Configure até três modelos em `~/.config/kubecli/config.toml`:
+
+```toml
+[[models]]
+name = "principal"
+provider = "openai"
+model = "seu-modelo"
+api_key_env = "OPENAI_API_KEY"
+order = 1
+
+[[models]]
+name = "fallback"
+provider = "anthropic"
+model = "seu-modelo"
+api_key_env = "ANTHROPIC_API_KEY"
+order = 2
+```
+
+Comandos:
+
+```bash
+kubecli ai agents ~/kubecli-agents
+kubecli ai list
+# ou: kubecli ai models
+kubecli ai start --agent ~/kubecli-agents/producao/AGENTS.md --context cluster-prod --namespace payments
+kubecli ai ask "por que o deployment payments falhou?"
+kubecli ai history
+kubecli ai mcp list
+```
+
+Também é possível usar o executável curto `ai` depois de reinstalar a ferramenta:
+
+```bash
+ai list
+ai start --agent ~/agentes/producao/AGENTS.md
+ai ask "por que o deployment falhou?"
+```
+
+O fluxo usa LangGraph quando instalado, mantém o estado da sessão em
+`~/.config/kubecli/ai-session.json` e aceita servidores MCP configurados no mesmo arquivo TOML.
+No Electron, cada aba possui um arquivo de sessão separado e pode selecionar um `AGENTS.md`
+independente, sem compartilhar agente, histórico ou consumo de modelos com as outras abas.
+Para integrações externas, a sessão também pode ser definida explicitamente com
+`kubecli ai --session /caminho/da/aba.json ...`.
+
+As credenciais usam o armazenamento seguro do sistema: Keychain no macOS e Secret Service
+(`secret-tool`/libsecret) no Linux. O Linux precisa ter o pacote `libsecret` com o comando
+`secret-tool` disponível para que a CLI externa reutilize tokens cadastrados no desktop.
+
 Todos os comandos possuem ajuda própria:
 
 ```bash

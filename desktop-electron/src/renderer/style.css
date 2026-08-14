@@ -54,6 +54,14 @@ button:hover { background: #3c4a5f; border-color: #53647d; }
 .history-item { width: 100%; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .history-empty { margin: 0; color: #b9c3d1; }
 .kubeconfig-card { width: min(580px, 88vw); }
+.ai-settings-card { width: min(720px, 92vw); }
+.ai-model-block { display: grid; gap: 8px; padding: 12px; border: 1px solid #53647d; border-radius: 6px; }
+.mcp-server-block { display: grid; gap: 8px; padding: 12px; border: 1px solid #53647d; border-radius: 6px; }
+.ai-model-block h3 { margin: 0; color: #69d391; font-size: 13px; }
+.ai-model-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ai-model-grid label:last-child { grid-column: 1 / -1; }
+.ai-model-grid input { width: 100%; padding: 8px; border: 1px solid #53647d; border-radius: 4px; background: #162033; color: #fff; font: 13px Menlo, monospace; }
+@media (max-width: 720px) { .ai-model-grid { grid-template-columns: 1fr; } .ai-model-grid label:last-child { grid-column: auto; } }
 .form-description { margin: 0; color: #b9c3d1; line-height: 1.45; }
 .form-result { margin: 0; padding: 0 18px 18px; line-height: 1.4; }
 .form-result[data-status="success"] { color: #69d391; }

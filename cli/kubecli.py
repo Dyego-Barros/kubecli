@@ -17,7 +17,7 @@ except ImportError:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kubecli", description="Atalhos para Kubernetes, OpenShift e cloud.")
-    main_commands = "{kubectl,kubens,kubectx,oc,ctx,ns,install,uninstall,list,setup,cloud,kubeconfig,aliases}"
+    main_commands = "{kubectl,kubens,kubectx,oc,ctx,ns,install,uninstall,list,setup,cloud,kubeconfig,aliases,ai}"
     subparsers = parser.add_subparsers(dest="command", metavar=main_commands)
     for command in COMMANDS:
         item = subparsers.add_parser(command, help=f"Executa {command}.")
@@ -68,6 +68,27 @@ def build_parser() -> argparse.ArgumentParser:
     kube_sub.add_parser("add", help="Adiciona um cluster interativamente.")
     remove = kube_sub.add_parser("remove", help="Remove um cluster.")
     remove.add_argument("cluster_name", nargs="?", help="Nome do cluster.")
+
+    ai_parser = subparsers.add_parser("ai", help="Troubleshooting assistido por IA.")
+    ai_parser.add_argument("--session", help="Arquivo de sessão independente, útil para cada aba do Electron.")
+    ai_sub = ai_parser.add_subparsers(dest="ai_action", metavar="{agents,list,models,mcp,start,ask,history}")
+    agents = ai_sub.add_parser("agents", help="Lista agentes AGENTS.md disponíveis.")
+    agents.add_argument("root", nargs="?", help="Diretório onde procurar agentes.")
+    ai_sub.add_parser("models", help="Lista os modelos configurados.")
+    ai_sub.add_parser("list", help="Lista os modelos configurados (alias de models).")
+    mcp = ai_sub.add_parser("mcp", help="Lista servidores MCP configurados.")
+    mcp.add_argument("mcp_action", nargs="?", choices=("list",), default="list")
+    start = ai_sub.add_parser("start", help="Inicia uma sessão com um AGENTS.md.")
+    start.add_argument("--agent", required=True, help="Caminho do AGENTS.md.")
+    start.add_argument("--context", default="", help="Contexto Kubernetes da sessão.")
+    start.add_argument("--namespace", default="default", help="Namespace da sessão.")
+    start.add_argument("--request", default="", help="Problema inicial (opcional).")
+    ask = ai_sub.add_parser("ask", help="Executa uma pergunta usando a sessão atual.")
+    ask.add_argument("--agent", help="AGENTS.md para criar a sessão automaticamente.")
+    ask.add_argument("--context", default="", help="Contexto Kubernetes da sessão automática.")
+    ask.add_argument("--namespace", default="default", help="Namespace da sessão automática.")
+    ask.add_argument("request", nargs="+", help="Pergunta ou problema.")
+    ai_sub.add_parser("history", help="Mostra a sessão atual.")
     return parser
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -122,6 +143,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.action == "remove":
             return kubeconfig.remove(args.cluster_name)
         parser.error("Use kubeconfig add ou kubeconfig remove.")
+    if args.command == "ai":
+        try:
+            from .ai.cli import run_ai_command
+        except ImportError:
+            try:
+                from ai.cli import run_ai_command
+            except ImportError:
+                # Compatibilidade com execução direta de cli/kubecli.py e
+                # instalações editáveis antigas que ainda não empacotaram ai/.
+                from pathlib import Path
+                sys.path.insert(0, str(Path(__file__).resolve().parent))
+                from ai.cli import run_ai_command
+        return run_ai_command(args)
     parser.error("Informe um comando válido.")
     return 2
 

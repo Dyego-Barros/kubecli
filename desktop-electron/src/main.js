@@ -1,9 +1,9 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const pty = require('node-pty');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 let win;
 const sessions = new Map();
@@ -22,6 +22,10 @@ let settings = { ...defaultSettings };
 // O padrão do app é sempre o kubeconfig do usuário.
 // Outro arquivo só é usado quando escolhido explicitamente pela interface.
 let kubeconfig = path.join(os.homedir(), '.kube', 'config');
+
+function aiSessionPath(id) {
+  return path.join(app.getPath('userData'), 'ai-sessions', `${String(id).replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
+}
 
 function createSessionKubeconfig(id, source) {
   if (id === 'main') return { path: source, temporary: false };
@@ -66,6 +70,145 @@ function loadSettings() {
 function saveSettings() {
   fs.mkdirSync(app.getPath('userData'), { recursive: true });
   fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
+}
+function aiSettingsPath() { return path.join(app.getPath('userData'), 'ai-settings.json'); }
+function aiCliConfigPath() { return path.join(app.getPath('userData'), 'ai-config.toml'); }
+function sharedAiCliConfigPath() { return path.join(os.homedir(), '.config', 'kubecli', 'ai-config.toml'); }
+const aiCredentialService = 'kubecli-ai';
+function emptyAiSettings() {
+  return { models: [1, 2, 3].map((order) => ({ order, name: `modelo-${order}`, provider: '', model: '', baseUrl: '', apiKeyEnv: '', token: '' })), mcpServers: [] };
+}
+function loadAiSettingsRaw() {
+  try { return JSON.parse(fs.readFileSync(aiSettingsPath(), 'utf8')); } catch { return emptyAiSettings(); }
+}
+function publicAiSettings() {
+  const raw = loadAiSettingsRaw();
+  return { models: (raw.models || []).map((model, index) => ({
+    order: model.order || index + 1,
+    name: model.name || `modelo-${index + 1}`,
+    provider: model.provider || '',
+    model: model.model || '',
+    baseUrl: model.baseUrl || '',
+    apiKeyEnv: model.apiKeyEnv || '',
+    tokenConfigured: Boolean(model.token),
+    token: '',
+  })), mcpServers: (raw.mcpServers || []).map((server, index) => ({
+    name: server.name || `mcp-${index + 1}`,
+    transport: server.transport || 'stdio',
+    command: server.command || '',
+    args: server.args || '',
+    url: server.url || '',
+    enabled: server.enabled !== false,
+    envConfigured: Boolean(server.env),
+    envJson: '',
+  })) };
+}
+function decryptToken(value) {
+  if (!value || !safeStorage.isEncryptionAvailable()) return '';
+  try { return safeStorage.decryptString(Buffer.from(value, 'base64')); } catch { return ''; }
+}
+function aiEnvironment() {
+  const env = {};
+  const settings = loadAiSettingsRaw();
+  for (const model of settings.models || []) {
+    if (model.apiKeyEnv && model.token) env[model.apiKeyEnv] = decryptToken(model.token);
+  }
+  for (const server of settings.mcpServers || []) {
+    if (!server.env) continue;
+    try { Object.assign(env, JSON.parse(decryptToken(server.env) || '{}')); } catch {}
+  }
+  return env;
+}
+function saveKeychainCredential(account, value) {
+  if (!account || !value) return;
+  try {
+    if (process.platform === 'darwin') {
+      execFileSync('security', ['add-generic-password', '-a', account, '-s', aiCredentialService, '-w', value, '-U'], { stdio: 'ignore' });
+    } else if (process.platform === 'linux') {
+      execFileSync('secret-tool', ['store', '--label=KubeCLI AI credential', 'service', aiCredentialService, 'account', account], { input: value, stdio: ['pipe', 'ignore', 'ignore'] });
+    }
+  } catch {}
+}
+function tomlString(value) {
+  return JSON.stringify(String(value || ''));
+}
+function modelCredentialAccount(index) { return `kubecli-ai-model-${index + 1}`; }
+function syncAiCliConfig() {
+  const raw = loadAiSettingsRaw();
+  for (const [index, model] of (raw.models || []).entries()) {
+    if (model.token) saveKeychainCredential(modelCredentialAccount(index), decryptToken(model.token));
+  }
+  const modelContent = (raw.models || []).filter((model) => model.provider && model.model).map((model, index) => [
+    '[[models]]',
+    `name = ${tomlString(model.name || `modelo-${index + 1}`)}`,
+    `provider = ${tomlString(model.provider)}`,
+    `model = ${tomlString(model.model)}`,
+    `base_url = ${tomlString(model.baseUrl)}`,
+    `api_key_env = ${tomlString(model.apiKeyEnv)}`,
+    `credential_account = ${tomlString(modelCredentialAccount(index))}`,
+    `order = ${index + 1}`,
+    '',
+  ].join('\n')).join('\n');
+  const mcpContent = (raw.mcpServers || []).filter((server) => server.name && server.enabled !== false).map((server) => [
+    '[[mcp.servers]]',
+    `name = ${tomlString(server.name)}`,
+    `transport = ${tomlString(server.transport || 'stdio')}`,
+    `command = ${tomlString(server.command)}`,
+    `args = ${JSON.stringify(String(server.args || '').split(/\s+/).filter(Boolean))}`,
+    `url = ${tomlString(server.url)}`,
+    'enabled = true',
+    '',
+  ].join('\n')).join('\n');
+  const content = `${modelContent}\n${mcpContent}`;
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(aiCliConfigPath(), content, { mode: 0o600 });
+  fs.mkdirSync(path.dirname(sharedAiCliConfigPath()), { recursive: true });
+  fs.writeFileSync(sharedAiCliConfigPath(), content, { mode: 0o600 });
+}
+function saveAiSettings(input) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('O armazenamento seguro do sistema não está disponível.');
+  const previous = loadAiSettingsRaw();
+  const models = (input.models || []).slice(0, 3).map((model, index) => {
+    const old = previous.models?.[index] || {};
+    let token = old.token || '';
+    if (model.token) {
+      const value = String(model.token);
+      token = safeStorage.encryptString(value).toString('base64');
+      saveKeychainCredential(modelCredentialAccount(index), value);
+    } else if (old.token) {
+      // Migra tokens já salvos no safeStorage para o Keychain compartilhado.
+      const value = decryptToken(old.token);
+      if (value) saveKeychainCredential(modelCredentialAccount(index), value);
+    }
+    return {
+      order: index + 1,
+      name: String(model.name || `modelo-${index + 1}`).trim(),
+      provider: String(model.provider || '').trim(),
+      model: String(model.model || '').trim(),
+      baseUrl: String(model.baseUrl || '').trim(),
+      apiKeyEnv: String(model.apiKeyEnv || '').trim(),
+      token,
+    };
+  });
+  const previousMcp = previous.mcpServers || [];
+  const mcpServers = (input.mcpServers || []).filter((server) => server.name || server.command || server.url).map((server, index) => {
+    const old = previousMcp[index] || {};
+    let env = old.env || '';
+    if (server.envJson) env = safeStorage.encryptString(String(server.envJson)).toString('base64');
+    return {
+      name: String(server.name || `mcp-${index + 1}`).trim(),
+      transport: String(server.transport || 'stdio').trim(),
+      command: String(server.command || '').trim(),
+      args: String(server.args || '').trim(),
+      url: String(server.url || '').trim(),
+      enabled: server.enabled !== false,
+      env,
+    };
+  });
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(aiSettingsPath(), JSON.stringify({ models, mcpServers }, null, 2));
+  syncAiCliConfig();
+  return publicAiSettings();
 }
 function aliasesPath() { return path.join(os.homedir(), '.config', 'kubecli', 'aliases.json'); }
 function readCustomAliases() {
@@ -154,7 +297,14 @@ function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
   }
   const isolated = createSessionKubeconfig(id, sessionKubeconfig);
   const shellPath = process.platform === 'darwin' ? '/bin/zsh' : (fs.existsSync('/bin/zsh') ? '/bin/zsh' : '/bin/bash');
-  const env = { ...process.env, KUBECONFIG: isolated.path };
+  syncAiCliConfig();
+  const env = {
+    ...process.env,
+    ...aiEnvironment(),
+    KUBECLI_CONFIG: aiCliConfigPath(),
+    KUBECLI_AI_SESSION: aiSessionPath(id),
+    KUBECONFIG: isolated.path,
+  };
   if (process.platform !== 'win32') env.TERM = 'xterm-256color';
   let session;
   try {
@@ -175,6 +325,8 @@ function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
     kubeconfig: sessionKubeconfig,
     runtimeKubeconfig: isolated.path,
     temporary: isolated.temporary,
+    agentPath: null,
+    aiSession: aiSessionPath(id),
   });
   session.write(shellInit(shellPath));
   session.onData((data) => {
@@ -194,6 +346,8 @@ function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
     kubeconfig: sessionKubeconfig,
     runtimeKubeconfig: isolated.path,
     settings,
+    aiSession: aiSessionPath(id),
+    agentPath: sessions.get(id)?.agentPath || null,
   });
   publishSessionState(id);
 }
@@ -240,6 +394,34 @@ ipcMain.handle('edit-kubeconfig', async (_event, { id = 'main' } = {}) => {
   return { kubeconfig: currentKubeconfig, id };
 });
 ipcMain.handle('get-kubeconfig', (_event, { id = 'main' } = {}) => sessions.get(id)?.kubeconfig || kubeconfig);
+ipcMain.handle('choose-agent', async (_event, { id = 'main' } = {}) => {
+  const result = await dialog.showOpenDialog(win, {
+    title: 'Escolher AGENTS.md',
+    defaultPath: os.homedir(),
+    properties: ['openFile'],
+    filters: [{ name: 'Agente', extensions: ['md'] }],
+  });
+  if (result.canceled || !result.filePaths[0]) return { id, agentPath: sessions.get(id)?.agentPath || null };
+  const selected = result.filePaths[0];
+  if (!path.basename(selected).toLowerCase().endsWith('agents.md')) {
+    return { id, agentPath: null, error: 'Escolha um arquivo AGENTS.md.' };
+  }
+  const session = sessions.get(id);
+  if (session) session.agentPath = selected;
+  const shellPath = `'${selected.replaceAll("'", "'\\''")}'`;
+  sessions.get(id)?.pty.write(`export KUBECLI_AI_AGENT=${shellPath}\n`);
+  win?.webContents.send('ai-config', { id, agentPath: selected, aiSession: aiSessionPath(id) });
+  return { id, agentPath: selected, aiSession: aiSessionPath(id) };
+});
+ipcMain.handle('get-ai-config', (_event, { id = 'main' } = {}) => {
+  const session = sessions.get(id);
+  return { id, agentPath: session?.agentPath || null, aiSession: aiSessionPath(id) };
+});
+ipcMain.handle('get-ai-settings', () => publicAiSettings());
+ipcMain.handle('save-ai-settings', (_event, input) => {
+  try { return { code: 0, settings: saveAiSettings(input || {}) }; }
+  catch (error) { return { code: 1, message: String(error.message || error) }; }
+});
 ipcMain.handle('save-alias', (_event, { name, command, args }) => {
   const aliasName = String(name || '').trim();
   const baseCommand = String(command || '').trim();

@@ -8,11 +8,20 @@ version = "0.1.0"
 description = "CLI unificada para kubectl, kubens, kubectx e oc"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "langchain-core>=0.3",
+    "langchain-openai>=0.3",
+    "langgraph>=0.2",
+    "langchain-mcp-adapters>=0.1",
+]
 
 [project.scripts]
 kubecli = "kubecli:main"
 kubecli-desktop = "kubecli_desktop:main"
+ai = "ai_entry:main"
 
 [tool.setuptools]
-py-modules = ["kubecli", "kubecli_desktop", "settings", "runtime", "aliases", "cloud", "installation", "kubeconfig", "prompt"]
+py-modules = ["kubecli", "kubecli_desktop", "ai_entry", "settings", "runtime", "aliases", "cloud", "installation", "kubeconfig", "prompt"]
+
+[tool.setuptools.packages.find]
+include = ["ai*"]

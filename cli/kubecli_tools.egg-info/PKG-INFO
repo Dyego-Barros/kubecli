@@ -4,6 +4,10 @@ Version: 0.1.0
 Summary: CLI unificada para kubectl, kubens, kubectx e oc
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
+Requires-Dist: langchain-core>=0.3
+Requires-Dist: langchain-openai>=0.3
+Requires-Dist: langgraph>=0.2
+Requires-Dist: langchain-mcp-adapters>=0.1
 
 # kubecli
 
@@ -34,6 +38,30 @@ kubecli ns use monitoring
 kubecli kubectl get pods -A
 ```
 
+## Aplicativo desktop
+
+Uma interface desktop simples pode abrir um terminal e executar comandos usando o kubeconfig padrão do usuário:
+
+```bash
+kubecli-desktop
+```
+
+Também é possível iniciar diretamente pelo código-fonte:
+
+```bash
+python cli/kubecli_desktop.py
+```
+
+O aplicativo inicia usando o kubeconfig padrão do usuário (`~/.kube/config`) e permite escolher
+outro arquivo pelo botão `Escolher kubeconfig`. O prompt exibe o contexto e o namespace atuais;
+ele é atualizado após comandos como `kubecli ctx use` e `kubecli ns use`. O aplicativo não armazena tokens.
+O botão `Editar kubeconfig` abre o arquivo atual no editor de texto padrão do sistema.
+
+No terminal desktop, os prefixos são opcionais. Por exemplo, `ctx list`, `ns list`, `pods` e
+`get pods -A` são expandidos automaticamente para os comandos correspondentes.
+Instalações (`oc install`, `setup`, etc.) são abertas no Terminal nativo para preservar prompts,
+`sudo` e entrada interativa do gerenciador de pacotes.
+
 Cada comando possui ajuda própria:
 
 ```bash
@@ -60,6 +88,12 @@ Para exibir automaticamente `(cluster/namespace)` no início do prompt, adicione
 
 ```bash
 eval "$(kubecli shell-init zsh)"
+```
+
+Depois recarregue o shell:
+
+```bash
+source ~/.zshrc
 ```
 
 No Bash, use no `~/.bashrc`:
@@ -113,6 +147,15 @@ kubecli install awscli      # instala aws
 kubecli install googlecli   # instala gcloud
 ```
 
+Para remover uma ferramenta instalada pela CLI:
+
+```bash
+kubecli uninstall oc
+kubecli uninstall kubectl
+```
+
+A remoção pede confirmação e usa o gerenciador de pacotes detectado no sistema.
+
 O comando não reinstala uma ferramenta que já esteja no `PATH`.
 
 A CLI identifica o sistema operacional e procura `brew`, `apt`, `dnf`, `pacman`, `zypper`, `winget` ou `choco`. Se nenhum gerenciador compatível for encontrado, ela informa qual gerenciador instalar e não tenta executar uma instalação desconhecida.
@@ -155,6 +198,13 @@ kubecli aliases remove meus-pods
 ```
 
 Os aliases personalizados são salvos em `~/.config/kubecli/aliases.json`. Os aliases padrão não podem ser removidos.
+
+Para disponibilizar aliases personalizados como comandos diretos no shell atual,
+recarregue a integração depois de cadastrá-los:
+
+```bash
+eval "$(kubecli shell-init zsh)"
+```
 
 ```bash
 kubecli k get pods -A       # kubectl

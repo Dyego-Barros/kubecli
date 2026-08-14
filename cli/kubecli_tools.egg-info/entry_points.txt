@@ -1,2 +1,4 @@
 [console_scripts]
+ai = ai_entry:main
 kubecli = kubecli:main
+kubecli-desktop = kubecli_desktop:main

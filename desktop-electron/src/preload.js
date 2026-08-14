@@ -9,8 +9,13 @@ contextBridge.exposeInMainWorld('kubecli', {
   chooseKubeconfig: () => ipcRenderer.invoke('choose-kubeconfig'),
   editKubeconfig: () => ipcRenderer.invoke('edit-kubeconfig'),
   getKubeconfig: () => ipcRenderer.invoke('get-kubeconfig'),
+  chooseAgent: (id = 'main') => ipcRenderer.invoke('choose-agent', { id }),
+  getAiConfig: (id = 'main') => ipcRenderer.invoke('get-ai-config', { id }),
+  getAiSettings: () => ipcRenderer.invoke('get-ai-settings'),
+  saveAiSettings: (settings) => ipcRenderer.invoke('save-ai-settings', settings),
   onData: (callback) => ipcRenderer.on('terminal-data', (_event, payload) => callback(payload.data, payload.id)),
   onConfig: (callback) => ipcRenderer.on('terminal-config', (_event, payload) => callback(payload, payload.id)),
   onExit: (callback) => ipcRenderer.on('terminal-exit', (_event, payload) => callback(payload.code, payload.id)),
   onResize: (callback) => ipcRenderer.on('terminal-resize', callback),
+  onAiConfig: (callback) => ipcRenderer.on('ai-config', (_event, payload) => callback(payload)),
 });

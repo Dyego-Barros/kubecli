@@ -41,12 +41,6 @@ seleção de contexto Kubernetes e ferramentas MCP.
 - `kubectl scale`
 - `kubectl rollout restart`
 
-## Proibições
-
-- Nunca excluir recursos automaticamente.
-- Nunca reiniciar workloads automaticamente.
-- Nunca executar comandos destrutivos sem confirmação clara do usuário.
-- Nunca exibir tokens, secrets, senhas ou conteúdo sensível.
 
 ## Formato da resposta
 

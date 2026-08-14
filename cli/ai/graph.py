@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import sys
 from typing import Annotated, Literal, TypedDict
 
 from langgraph.graph.message import add_messages
@@ -14,6 +15,11 @@ from .session import Session
 
 
 READ_ONLY_COMMANDS = {"get", "describe", "logs", "events", "top", "cluster-info", "auth"}
+MODIFYING_COMMANDS = {
+    "apply", "create", "delete", "edit", "exec", "patch", "replace", "scale",
+    "rollout", "set", "label", "annotate", "taint", "cordon", "drain", "uncordon",
+    "autoscale",
+}
 CLUSTER_SCOPED_RESOURCES = {"nodes", "node", "namespaces", "namespace", "ns", "clusterroles", "clusterrole", "clusterrolebindings", "crd", "crds", "persistentvolumes", "pv", "storageclasses", "storageclass", "sc"}
 
 
@@ -24,7 +30,7 @@ class AgentState(TypedDict):
 class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
     tool_rounds: int
-    phase: Literal["collect", "diagnose", "propose"]
+    phase: Literal["collect", "diagnose", "act", "propose"]
 
 
 def _system_prompt(session: Session) -> str:
@@ -34,8 +40,13 @@ Contexto Kubernetes atual: {session.context or 'não informado'}
 Namespace atual: {session.namespace}
 
 Use a ferramenta run_kubectl para coletar evidências reais. Nunca invente a saída
-de comandos. Execute somente comandos de leitura automaticamente. Se uma ação
-modificadora for necessária, explique e peça confirmação antes de executar.
+de comandos. Execute comandos de leitura automaticamente. Quando o usuário pedir
+para resolver, corrigir, reiniciar ou fazer rollout, e a evidência indicar que a
+ação é necessária, chame run_kubectl com o comando modificador em vez de apenas
+imprimi-lo. O executor exibirá o comando e pedirá autorização no terminal antes
+de executar; a IA não pode aprovar essa autorização por conta própria.
+Se o terminal negar uma autorização, não repita o mesmo comando; registre a
+recusa e continue apenas com diagnóstico ou comandos de leitura.
 Execute o troubleshooting em etapas: primeiro liste os pods do namespace, depois
 faça describe nos pods com problemas, consulte eventos e, quando houver RESTARTS,
 consulte também os logs da execução anterior usando `kubectl logs NOME --previous`;
@@ -68,6 +79,21 @@ def _evidence_from_messages(messages) -> str:
     return "\n\n".join(evidence)
 
 
+def _confirm_modifying_command(command: list[str]) -> bool:
+    """Exige autorização humana no terminal antes de executar uma alteração."""
+    if not sys.stdin.isatty():
+        return False
+    print("\nA IA solicitou a execução de um comando modificador:")
+    print(f"  {' '.join(command)}")
+    print("Essa ação pode alterar recursos do cluster.")
+    try:
+        answer = input("Autorizar execução? [s/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("Autorização cancelada.")
+        return False
+    return answer in {"s", "sim", "y", "yes"}
+
+
 def _make_kubectl_tool(session: Session):
     from pydantic import AliasChoices, BaseModel, Field, model_validator
     from langchain_core.tools import tool
@@ -82,9 +108,11 @@ def _make_kubectl_tool(session: Session):
                 values = {**values, "args": values["v__args"]}
             return values
 
+    denied_commands: set[str] = set()
+
     @tool(args_schema=KubectlInput)
     def run_kubectl(args: list[str] | None = None) -> str:
-        """Executa kubectl para diagnóstico. Use apenas get, describe, logs, events, top, cluster-info ou auth."""
+        """Executa kubectl; alterações exigem confirmação explícita no terminal."""
         selected_args = args
         if isinstance(selected_args, str):
             selected_args = selected_args.split()
@@ -95,12 +123,12 @@ def _make_kubectl_tool(session: Session):
             values.pop(1)
         if not values:
             return "ERRO DE ARGUMENTOS: informe uma lista kubectl, por exemplo ['get', 'pods']. Corrija a chamada e tente novamente."
-        if values[0] not in READ_ONLY_COMMANDS:
+        command = values[0]
+        if command not in READ_ONLY_COMMANDS and command not in MODIFYING_COMMANDS:
             return "AÇÃO BLOQUEADA: comando kubectl não permitido sem confirmação."
         explicit_namespace = any(item in {"-n", "--namespace", "-A", "--all-namespaces"} or item.startswith("--namespace=") for item in values)
-        command = values[0]
         target = next((item for item in values[1:] if not item.startswith("-") and "=" not in item), "")
-        namespaced = command in {"logs", "events"} or (command in {"get", "describe", "top"} and target.split("/", 1)[0] not in CLUSTER_SCOPED_RESOURCES)
+        namespaced = command in {"logs", "events", "apply", "create", "delete", "edit", "exec", "patch", "replace", "scale", "set", "label", "annotate", "rollout"} or (command in {"get", "describe", "top"} and target.split("/", 1)[0] not in CLUSTER_SCOPED_RESOURCES)
         if session.context:
             values = ["--context", session.context, *values]
         if session.namespace and namespaced and not explicit_namespace:
@@ -108,6 +136,13 @@ def _make_kubectl_tool(session: Session):
         elif session.namespace and namespaced and any(item in {"-A", "--all-namespaces"} for item in values):
             values = [item for item in values if item not in {"-A", "--all-namespaces"}]
             values.extend(["-n", session.namespace])
+        if command in MODIFYING_COMMANDS:
+            authorization_command = " ".join(["kubectl", *values])
+            if authorization_command in denied_commands:
+                return "AÇÃO NÃO AUTORIZADA: esse comando já foi recusado no terminal; não o repita."
+            if not _confirm_modifying_command(["kubectl", *values]):
+                denied_commands.add(authorization_command)
+                return "AÇÃO NÃO AUTORIZADA: o comando modificador não foi confirmado no terminal."
         try:
             result = subprocess.run(
                 ["kubectl", *values],
@@ -218,6 +253,39 @@ EVIDÊNCIAS:
                 failures.append(f"{provider}: {type(error).__name__}")
         raise ModelError("Todos os modelos falharam no diagnóstico: " + ", ".join(failures))
 
+    async def act(state: GraphState):
+        """Decide requested changes through the guarded tool, never by text."""
+        prompt = """Você está na etapa AÇÃO AUTORIZÁVEL do troubleshooting.
+
+O pedido original do usuário está na conversa. Verifique se ele pediu para
+resolver/corrigir/reiniciar/fazer rollout e se o diagnóstico mostra que uma ação
+modificadora é necessária. Se sim, chame run_kubectl agora com UM comando exato;
+não escreva o comando como texto. O executor exibirá a confirmação no terminal.
+Se não houver necessidade ou autorização implícita suficiente no pedido, responda
+sem chamar ferramenta e encaminhe para a proposta. Nunca diga que uma ação foi
+recusada ou executada sem uma mensagem de ferramenta comprovando isso.
+"""
+        messages = [SystemMessage(content=_system_prompt(session)), *state["messages"], HumanMessage(content=prompt)]
+        failures = []
+        if state.get("tool_rounds", 0) >= 8:
+            return {"messages": [HumanMessage(content="Não execute novas ações; encaminhe para a proposta.")], "phase": "propose"}
+        for provider, model in collector_models:
+            try:
+                response = await model.ainvoke(messages)
+                for call in getattr(response, "tool_calls", []) or []:
+                    call_args = call.get("args", {})
+                    if isinstance(call_args, dict) and "v__args" in call_args:
+                        call["args"] = {"args": call_args["v__args"]}
+                session.models_used.append(provider)
+                return {
+                    "messages": [response],
+                    "tool_rounds": state.get("tool_rounds", 0) + (1 if response.tool_calls else 0),
+                    "phase": "act",
+                }
+            except Exception as error:
+                failures.append(f"{provider}: {type(error).__name__}")
+        raise ModelError("Todos os modelos falharam na autorização da ação: " + ", ".join(failures))
+
     async def propose(state: GraphState):
         evidence = _evidence_from_messages(state["messages"])
         prompt = f"""Você está na etapa PROPOSTA DE SOLUÇÃO de um troubleshooting Kubernetes.
@@ -232,10 +300,12 @@ com exatamente estas seções:
 ### Validação pós-solução
 
 Em Solução possível, descreva os comandos modificadores apenas como proposta.
-Não execute nem simule a execução de `apply`, `patch`, `edit`, `delete`, `exec`,
-`scale` ou `rollout restart`. Em Confirmação necessária, diga claramente que o
-usuário deve confirmar antes de qualquer mudança. Em Validação pós-solução,
-descreva quais comandos de leitura serão usados após a aprovação.
+Não afirme que um comando foi executado sem uma evidência de ferramenta com
+`exit_code`. Se a coleta não executou uma ação, descreva-a como proposta. Em
+Confirmação necessária, só use “recusada” se houver uma mensagem de ferramenta
+com `AÇÃO NÃO AUTORIZADA`; caso contrário, informe que ainda aguarda autorização.
+Em Validação pós-solução, descreva quais comandos de leitura serão usados após a
+aprovação.
 
 EVIDÊNCIAS COLETADAS:
 {evidence or 'Nenhuma evidência disponível.'}
@@ -258,6 +328,7 @@ EVIDÊNCIAS COLETADAS:
     workflow.add_node("collect", collect)
     workflow.add_node("tools", ToolNode(collector_tools, handle_tool_errors=True))
     workflow.add_node("diagnose", diagnose)
+    workflow.add_node("act", act)
     workflow.add_node("propose", propose)
     workflow.add_edge(START, "collect")
     workflow.add_conditional_edges(
@@ -265,8 +336,17 @@ EVIDÊNCIAS COLETADAS:
         lambda state: "tools" if state.get("phase") == "collect" and tools_condition(state) == "tools" else "diagnose",
         {"tools": "tools", "diagnose": "diagnose"},
     )
-    workflow.add_edge("tools", "collect")
-    workflow.add_edge("diagnose", "propose")
+    workflow.add_conditional_edges(
+        "tools",
+        lambda state: "act" if state.get("phase") == "act" else "collect",
+        {"act": "act", "collect": "collect"},
+    )
+    workflow.add_edge("diagnose", "act")
+    workflow.add_conditional_edges(
+        "act",
+        lambda state: "tools" if tools_condition(state) == "tools" else "propose",
+        {"tools": "tools", "propose": "propose"},
+    )
     workflow.add_edge("propose", END)
     return workflow.compile()
 

@@ -56,8 +56,8 @@ def build_provider_models(tools: Sequence[Any], configurations: Sequence[ModelCo
             "model": config.model,
             "temperature": 0,
             "api_key": token,
-            "timeout": 90,
-            "max_retries": 1,
+            "timeout": 30,
+            "max_retries": 0,
         }
         base_url = _chat_base_url(config)
         if base_url:

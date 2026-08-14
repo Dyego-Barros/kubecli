@@ -273,6 +273,7 @@ kubecli ai start --agent ~/kubecli-agents/producao/AGENTS.md --context cluster-p
 kubecli ai ask "por que o deployment payments falhou?"
 kubecli ai history
 kubecli ai mcp list
+kubecli ai mcp test
 ```
 
 Também é possível usar o executável curto `ai` depois de reinstalar a ferramenta:
@@ -285,6 +286,29 @@ ai ask "por que o deployment falhou?"
 
 O fluxo usa LangGraph quando instalado, mantém o estado da sessão em
 `~/.config/kubecli/ai-session.json` e aceita servidores MCP configurados no mesmo arquivo TOML.
+Servidores MCP habilitados são conectados durante a coleta e suas ferramentas ficam disponíveis
+para o agente junto com `run_kubectl`. Use `ai mcp test` para fazer o handshake e listar as
+ferramentas descobertas sem iniciar um troubleshooting.
+
+Exemplo de configuração MCP:
+
+```toml
+[[mcp.servers]]
+name = "kubernetes"
+transport = "stdio"
+command = "npx"
+args = ["-y", "seu-servidor-mcp"]
+enabled = true
+
+[[mcp.servers]]
+name = "observability"
+transport = "streamable_http"
+url = "http://127.0.0.1:3000/mcp"
+enabled = true
+```
+
+Se um servidor estiver indisponível, a CLI informa o erro, mantém `run_kubectl` disponível
+e continua o troubleshooting sem derrubar a sessão.
 No Electron, cada aba possui um arquivo de sessão separado e pode selecionar um `AGENTS.md`
 independente, sem compartilhar agente, histórico ou consumo de modelos com as outras abas.
 Para integrações externas, a sessão também pode ser definida explicitamente com

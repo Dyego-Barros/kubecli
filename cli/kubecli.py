@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     ai_sub.add_parser("models", help="Lista os modelos configurados.")
     ai_sub.add_parser("list", help="Lista os modelos configurados (alias de models).")
     mcp = ai_sub.add_parser("mcp", help="Lista servidores MCP configurados.")
-    mcp.add_argument("mcp_action", nargs="?", choices=("list",), default="list")
+    mcp.add_argument("mcp_action", nargs="?", choices=("list", "test"), default="list")
     start = ai_sub.add_parser("start", help="Inicia uma sessão com um AGENTS.md.")
     start.add_argument("--agent", required=True, help="Caminho do AGENTS.md.")
     start.add_argument("--context", default="", help="Contexto Kubernetes da sessão.")

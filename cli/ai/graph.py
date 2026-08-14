@@ -8,6 +8,7 @@ from typing import Annotated, Literal, TypedDict
 from langgraph.graph.message import add_messages
 
 from .config import ModelConfig, load_config
+from .mcp import load_tools
 from .models import ModelError, build_provider_models
 from .session import Session
 
@@ -128,23 +129,29 @@ def _make_kubectl_tool(session: Session):
     return run_kubectl
 
 
-async def _build_graph(session: Session, models: list[ModelConfig]):
+async def _build_graph(session: Session, models: list[ModelConfig], servers=None):
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langgraph.graph import END, START, StateGraph
     from langgraph.prebuilt import ToolNode, tools_condition
 
     tool = _make_kubectl_tool(session)
-    collector_models = build_provider_models([tool], models)
+    mcp_tools, mcp_errors = await load_tools(servers or [])
+    collector_tools = [tool, *mcp_tools]
+    collector_models = build_provider_models(collector_tools, models)
     analysis_models = build_provider_models([], models)
 
     async def collect(state: GraphState):
         messages = [
-            SystemMessage(content=_system_prompt(session)),
+            SystemMessage(
+                content=_system_prompt(session)
+                + ("\nFerramentas MCP disponíveis: " + ", ".join(item.name for item in mcp_tools) if mcp_tools else "")
+                + ("\nServidores MCP indisponíveis: " + "; ".join(mcp_errors) if mcp_errors else ""),
+            ),
             *state["messages"],
         ]
         tool_rounds = state.get("tool_rounds", 0)
         failures = []
-        if tool_rounds >= 12:
+        if tool_rounds >= 8:
             return {
                 "messages": [
                     HumanMessage(
@@ -249,7 +256,7 @@ EVIDÊNCIAS COLETADAS:
 
     workflow = StateGraph(GraphState)
     workflow.add_node("collect", collect)
-    workflow.add_node("tools", ToolNode([tool], handle_tool_errors=True))
+    workflow.add_node("tools", ToolNode(collector_tools, handle_tool_errors=True))
     workflow.add_node("diagnose", diagnose)
     workflow.add_node("propose", propose)
     workflow.add_edge(START, "collect")
@@ -264,15 +271,20 @@ EVIDÊNCIAS COLETADAS:
     return workflow.compile()
 
 
-async def _run_graph(session: Session, request: str, models: list[ModelConfig]) -> str:
+async def _run_graph(session: Session, request: str, models: list[ModelConfig], servers=None) -> str:
     from langchain_core.messages import HumanMessage
 
-    graph = await _build_graph(session, models)
     try:
-        result = await graph.ainvoke(
-            {"messages": [HumanMessage(content=request)], "tool_rounds": 0, "phase": "collect"},
-            config={"configurable": {"thread_id": session.agent_path}, "recursion_limit": 60},
+        graph = await asyncio.wait_for(_build_graph(session, models, servers), timeout=30)
+        result = await asyncio.wait_for(
+            graph.ainvoke(
+                {"messages": [HumanMessage(content=request)], "tool_rounds": 0, "phase": "collect"},
+                config={"configurable": {"thread_id": session.agent_path}, "recursion_limit": 40},
+            ),
+            timeout=180,
         )
+    except asyncio.TimeoutError as error:
+        raise ModelError("O troubleshooting excedeu o tempo limite (30s na preparação ou 180s na execução).") from error
     except Exception as error:
         if type(error).__name__ == "GraphRecursionError":
             raise ModelError("O agente entrou em um ciclo de ferramentas e foi interrompido com segurança.") from error
@@ -284,10 +296,10 @@ async def _run_graph(session: Session, request: str, models: list[ModelConfig]) 
     return f"[{session.models_used[-1]}]\n{session.last_response}"
 
 
-def run_graph(session: Session, request: str, models: list[ModelConfig], session_file=None) -> str:
+def run_graph(session: Session, request: str, models: list[ModelConfig], session_file=None, servers=None) -> str:
     if not models:
         models, _ = load_config()
-    result = asyncio.run(_run_graph(session, request, models))
+    result = asyncio.run(_run_graph(session, request, models, servers))
     if session_file:
         session.save(session_file)
     return result

@@ -62,7 +62,8 @@ def build_provider_models(tools: Sequence[Any], configurations: Sequence[ModelCo
         base_url = _chat_base_url(config)
         if base_url:
             kwargs["base_url"] = base_url
-        models.append((config.name, ChatOpenAI(**kwargs).bind_tools(list(tools))))
+        chat = ChatOpenAI(**kwargs)
+        models.append((config.name, chat.bind_tools(list(tools)) if tools else chat))
     if not models:
         details = f" Tokens ausentes: {', '.join(missing)}." if missing else ""
         raise ModelError(f"Nenhum modelo de IA pôde ser inicializado.{details}")

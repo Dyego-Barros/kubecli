@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-from typing import Annotated, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from langgraph.graph.message import add_messages
 
@@ -23,6 +23,7 @@ class AgentState(TypedDict):
 class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
     tool_rounds: int
+    phase: Literal["collect", "diagnose", "propose"]
 
 
 def _system_prompt(session: Session) -> str:
@@ -40,6 +41,30 @@ consulte também os logs da execução anterior usando `kubectl logs NOME --prev
 não use `kubectl logs pod NOME`. Só apresente o diagnóstico depois de coletar as
 evidências disponíveis.
 """
+
+
+def _text_content(message) -> str:
+    content = getattr(message, "content", message)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                parts.append(str(part.get("text", "")))
+        return "".join(parts)
+    return str(content or "")
+
+
+def _evidence_from_messages(messages) -> str:
+    evidence = []
+    for item in messages:
+        if getattr(item, "type", "") != "tool":
+            continue
+        evidence.append(_text_content(item)[:12000])
+    return "\n\n".join(evidence)
 
 
 def _make_kubectl_tool(session: Session):
@@ -104,29 +129,34 @@ def _make_kubectl_tool(session: Session):
 
 
 async def _build_graph(session: Session, models: list[ModelConfig]):
-    from langchain_core.messages import AIMessage, SystemMessage
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from langgraph.graph import END, START, StateGraph
     from langgraph.prebuilt import ToolNode, tools_condition
 
     tool = _make_kubectl_tool(session)
-    provider_models = build_provider_models([tool], models)
+    collector_models = build_provider_models([tool], models)
+    analysis_models = build_provider_models([], models)
 
-    async def assistant(state: GraphState):
-        messages = [SystemMessage(content=_system_prompt(session)), *state["messages"]]
+    async def collect(state: GraphState):
+        messages = [
+            SystemMessage(content=_system_prompt(session)),
+            *state["messages"],
+        ]
         tool_rounds = state.get("tool_rounds", 0)
-        if tool_rounds >= 8:
-            tool_messages = [item for item in state["messages"] if getattr(item, "type", "") == "tool"]
-            evidence = []
-            for item in tool_messages:
-                content = item.content if isinstance(item.content, str) else str(item.content)
-                evidence.append(content[:12000])
-            if evidence:
-                final = "Interrompi a coleta após oito etapas para evitar um ciclo de ferramentas.\n\nEvidências coletadas:\n" + "\n\n".join(evidence)
-            else:
-                final = "O modelo solicitou ferramentas, mas nenhuma evidência de execução foi retornada pelo ToolNode."
-            return {"messages": [AIMessage(content=final)]}
         failures = []
-        for provider, model in provider_models:
+        if tool_rounds >= 12:
+            return {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            "A coleta atingiu o limite de segurança. Pare de chamar ferramentas "
+                            "e encaminhe as evidências já coletadas para diagnóstico."
+                        )
+                    )
+                ],
+                "phase": "diagnose",
+            }
+        for provider, model in collector_models:
             try:
                 response = await model.ainvoke(messages)
                 # Alguns modelos OpenAI-compatible devolvem o argumento de uma
@@ -144,19 +174,93 @@ async def _build_graph(session: Session, models: list[ModelConfig]):
                     if not str(content or "").strip():
                         raise ModelError(f"{provider} retornou uma resposta vazia.")
                 session.models_used.append(provider)
-                return {"messages": [response], "tool_rounds": tool_rounds + (1 if response.tool_calls else 0)}
+                return {
+                    "messages": [response],
+                    "tool_rounds": tool_rounds + (1 if response.tool_calls else 0),
+                    "phase": "collect",
+                }
             except Exception as error:
                 failures.append(f"{provider}: {type(error).__name__}")
                 # O fallback é deliberadamente sequencial, como no lia_backend.
                 continue
         raise ModelError("Todos os modelos falharam: " + ", ".join(failures))
 
+    async def diagnose(state: GraphState):
+        evidence = _evidence_from_messages(state["messages"])
+        prompt = f"""Você está na etapa DIAGNÓSTICO de um troubleshooting Kubernetes.
+
+Sessão: contexto={session.context or 'não informado'}, namespace={session.namespace}.
+Analise somente as evidências reais abaixo. Separe fatos observados de hipóteses,
+aponte a causa provável dos restarts e informe o nível de confiança. Não invente
+comandos, saídas ou causas que não estejam sustentadas pelas evidências.
+
+EVIDÊNCIAS:
+{evidence or 'Nenhuma evidência de ferramenta foi coletada.'}
+"""
+        failures = []
+        for provider, model in analysis_models:
+            try:
+                response = await model.ainvoke(
+                    [SystemMessage(content=_system_prompt(session)), *state["messages"], HumanMessage(content=prompt)]
+                )
+                if not _text_content(response).strip():
+                    raise ModelError(f"{provider} retornou diagnóstico vazio.")
+                session.models_used.append(provider)
+                return {"messages": [response], "phase": "diagnose"}
+            except Exception as error:
+                failures.append(f"{provider}: {type(error).__name__}")
+        raise ModelError("Todos os modelos falharam no diagnóstico: " + ", ".join(failures))
+
+    async def propose(state: GraphState):
+        evidence = _evidence_from_messages(state["messages"])
+        prompt = f"""Você está na etapa PROPOSTA DE SOLUÇÃO de um troubleshooting Kubernetes.
+
+Com base apenas no diagnóstico e nas evidências da conversa, responda em português
+com exatamente estas seções:
+
+### Diagnóstico
+### Evidências
+### Solução possível
+### Confirmação necessária
+### Validação pós-solução
+
+Em Solução possível, descreva os comandos modificadores apenas como proposta.
+Não execute nem simule a execução de `apply`, `patch`, `edit`, `delete`, `exec`,
+`scale` ou `rollout restart`. Em Confirmação necessária, diga claramente que o
+usuário deve confirmar antes de qualquer mudança. Em Validação pós-solução,
+descreva quais comandos de leitura serão usados após a aprovação.
+
+EVIDÊNCIAS COLETADAS:
+{evidence or 'Nenhuma evidência disponível.'}
+"""
+        failures = []
+        for provider, model in analysis_models:
+            try:
+                response = await model.ainvoke(
+                    [SystemMessage(content=_system_prompt(session)), *state["messages"], HumanMessage(content=prompt)]
+                )
+                if not _text_content(response).strip():
+                    raise ModelError(f"{provider} retornou proposta vazia.")
+                session.models_used.append(provider)
+                return {"messages": [response], "phase": "propose"}
+            except Exception as error:
+                failures.append(f"{provider}: {type(error).__name__}")
+        raise ModelError("Todos os modelos falharam na proposta: " + ", ".join(failures))
+
     workflow = StateGraph(GraphState)
-    workflow.add_node("assistant", assistant)
+    workflow.add_node("collect", collect)
     workflow.add_node("tools", ToolNode([tool], handle_tool_errors=True))
-    workflow.add_edge(START, "assistant")
-    workflow.add_conditional_edges("assistant", tools_condition)
-    workflow.add_edge("tools", "assistant")
+    workflow.add_node("diagnose", diagnose)
+    workflow.add_node("propose", propose)
+    workflow.add_edge(START, "collect")
+    workflow.add_conditional_edges(
+        "collect",
+        lambda state: "tools" if state.get("phase") == "collect" and tools_condition(state) == "tools" else "diagnose",
+        {"tools": "tools", "diagnose": "diagnose"},
+    )
+    workflow.add_edge("tools", "collect")
+    workflow.add_edge("diagnose", "propose")
+    workflow.add_edge("propose", END)
     return workflow.compile()
 
 
@@ -166,16 +270,14 @@ async def _run_graph(session: Session, request: str, models: list[ModelConfig]) 
     graph = await _build_graph(session, models)
     try:
         result = await graph.ainvoke(
-            {"messages": [HumanMessage(content=request)], "tool_rounds": 0},
-            config={"configurable": {"thread_id": session.agent_path}, "recursion_limit": 40},
+            {"messages": [HumanMessage(content=request)], "tool_rounds": 0, "phase": "collect"},
+            config={"configurable": {"thread_id": session.agent_path}, "recursion_limit": 60},
         )
     except Exception as error:
         if type(error).__name__ == "GraphRecursionError":
             raise ModelError("O agente entrou em um ciclo de ferramentas e foi interrompido com segurança.") from error
         raise
-    response = result["messages"][-1].content
-    if isinstance(response, list):
-        response = "".join(part.get("text", "") for part in response if isinstance(part, dict))
+    response = _text_content(result["messages"][-1]).strip()
     session.last_request = request
     session.last_response = str(response).strip()
     session.save()

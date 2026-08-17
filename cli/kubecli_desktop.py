@@ -220,7 +220,7 @@ class TerminalWindow(tk.Tk):
             self._show_prompt()
             return
         if command == "help":
-            self._print("Atalhos: clear, pwd, kubeconfig, terminal, exit\nExemplos rápidos: ctx list, ns list, get pods -A, pods, k get pods\nComandos explícitos: kubectl, kubecli, helm, terraform e qualquer executável disponível no PATH.\n\n", MUTED)
+            self._print("Atalhos: clear, pwd, kubeconfig, terminal, exit\nExemplos rápidos: ctx list, ns list, get pods -A, pods, k get pods\nComandos explícitos: kubectl, kubecli, helm e qualquer executável disponível no PATH.\n\n", MUTED)
             self._show_prompt()
             return
         if command == "pwd":

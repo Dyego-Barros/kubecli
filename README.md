@@ -357,23 +357,4 @@ kubecli install --help
 ## Estrutura do projeto
 
 - [`cli/`](cli/): código da CLI Python e sua documentação detalhada;
-- [`desktop-electron/`](desktop-electron/): aplicativo desktop Electron;
-- `modules/`: módulos Terraform para OpenSearch e monitoramento;
-- `helm/`: templates de valores Helm usados pelo Terraform.
-
-## Infraestrutura Terraform
-
-Além do KubeCLI, este repositório contém a infraestrutura do cluster de
-monitoramento. Para utilizá-la:
-
-```bash
-cp terraform.tfvars.example terraform.tfvars
-# edite as variáveis sensíveis
-
-terraform init
-terraform plan
-terraform apply
-```
-
-As senhas e kubeconfigs devem ser mantidos fora do Git e em um gerenciador seguro
-de secrets ou backend protegido do Terraform.
+- [`desktop-electron/`](desktop-electron/): aplicativo desktop Electron.

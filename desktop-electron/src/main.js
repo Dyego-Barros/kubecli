@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell, safeStorage } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -15,7 +15,7 @@ const defaultSettings = {
   lineHeight: 1.28,
   cursorStyle: 'block',
   cursorBlink: true,
-  scrollback: 10000,
+  scrollback: 5000,
   profiles: {},
 };
 let settings = { ...defaultSettings };
@@ -28,7 +28,6 @@ function aiSessionPath(id) {
 }
 
 function createSessionKubeconfig(id, source) {
-  if (id === 'main') return { path: source, temporary: false };
   const target = path.join(app.getPath('temp'), `kubecli-${process.pid}-${id}.yaml`);
   try {
     fs.copyFileSync(source, target);
@@ -39,6 +38,8 @@ function createSessionKubeconfig(id, source) {
 }
 
 function cleanupSession(session) {
+  if (session?.outputTimer) clearTimeout(session.outputTimer);
+  if (session?.stateRefreshTimer) clearTimeout(session.stateRefreshTimer);
   if (!session?.temporary) return;
   try { fs.unlinkSync(session.runtimeKubeconfig); } catch {}
 }
@@ -58,12 +59,47 @@ function readSessionState(id) {
 }
 
 function publishSessionState(id) {
-  readSessionState(id).then((state) => {
-    win?.webContents.send('terminal-state', { id, state });
-  });
+  const session = sessions.get(id);
+  if (!session) return;
+  if (session.stateRefreshTimer || session.stateRefreshInFlight) {
+    session.stateRefreshPending = true;
+    return;
+  }
+  session.stateRefreshTimer = setTimeout(() => {
+    session.stateRefreshTimer = null;
+    session.stateRefreshInFlight = true;
+    readSessionState(id).then((state) => {
+      const current = sessions.get(id);
+      if (!current) return;
+      if (!current.lastState || current.lastState.context !== state.context || current.lastState.namespace !== state.namespace) {
+        current.lastState = state;
+        win?.webContents.send('terminal-state', { id, state });
+      }
+    }).finally(() => {
+      const current = sessions.get(id);
+      if (!current) return;
+      current.stateRefreshInFlight = false;
+      if (current.stateRefreshPending) {
+        current.stateRefreshPending = false;
+        publishSessionState(id);
+      }
+    });
+  }, 120);
 }
 
 function settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
+function legacyUserDataPath() { return path.join(app.getPath('appData'), 'kubecli-desktop'); }
+function migrateLegacyUserData() {
+  const current = app.getPath('userData');
+  const legacy = legacyUserDataPath();
+  if (current === legacy || !fs.existsSync(legacy)) return;
+  fs.mkdirSync(current, { recursive: true });
+  for (const filename of ['ai-settings.json', 'settings.json']) {
+    const source = path.join(legacy, filename);
+    const target = path.join(current, filename);
+    if (fs.existsSync(source) && !fs.existsSync(target)) fs.copyFileSync(source, target);
+  }
+}
 function loadSettings() {
   try { settings = { ...defaultSettings, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) }; } catch { settings = { ...defaultSettings }; }
 }
@@ -132,6 +168,10 @@ function saveKeychainCredential(account, value) {
 function tomlString(value) {
   return JSON.stringify(String(value || ''));
 }
+function normalizeMcpArgs(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
+  return String(value || '').trim().split(/\s+/).filter(Boolean);
+}
 function modelCredentialAccount(index) { return `kubecli-ai-model-${index + 1}`; }
 function syncAiCliConfig() {
   const raw = loadAiSettingsRaw();
@@ -154,7 +194,7 @@ function syncAiCliConfig() {
     `name = ${tomlString(server.name)}`,
     `transport = ${tomlString(server.transport || 'stdio')}`,
     `command = ${tomlString(server.command)}`,
-    `args = ${JSON.stringify(String(server.args || '').split(/\s+/).filter(Boolean))}`,
+    `args = ${JSON.stringify(normalizeMcpArgs(server.args))}`,
     `url = ${tomlString(server.url)}`,
     'enabled = true',
     '',
@@ -199,7 +239,7 @@ function saveAiSettings(input) {
       name: String(server.name || `mcp-${index + 1}`).trim(),
       transport: String(server.transport || 'stdio').trim(),
       command: String(server.command || '').trim(),
-      args: String(server.args || '').trim(),
+      args: Array.isArray(server.args) ? server.args.map((item) => String(item)).join(' ') : String(server.args || '').trim(),
       url: String(server.url || '').trim(),
       enabled: server.enabled !== false,
       env,
@@ -225,7 +265,14 @@ function shellInit(shellPath) {
     .map((name) => `alias ${name}='kubecli ${name}'`);
   const common = [
     "alias k='kubectl'",
-    "alias kc='kubectl'",
+    "alias kgp='kubectl get pods'",
+    "alias kgn='kubectl get nodes'",
+    "alias kctx='kubecli ctx list'",
+    "alias kns='kubecli ns list'",
+    "alias kdesc='kubectl describe'",
+    "alias kl='kubectl logs'",
+    "alias kevents='kubectl get events --sort-by=.lastTimestamp'",
+    "alias kroll='kubectl rollout status'",
     "alias get='kubectl get'",
     "alias pods='kubectl get pods'",
     "alias po='kubectl get pods'",
@@ -246,13 +293,13 @@ function shellInit(shellPath) {
     return [
       "autoload -U colors && colors",
       "setopt prompt_subst",
-      "precmd() { print; print -Pn '\\e]777;KUBECLI_READY\\a'; }",
+      "precmd() { print -Pn '\\e]777;KUBECLI_READY\\a'; }",
       "PROMPT='%F{green}%n@%m%f %F{white}%U%~%u %#%f '",
       ...common,
     ].join(';') + ';\n';
   }
   return [
-    "PROMPT_COMMAND='printf \\\"\\n\\e]777;KUBECLI_READY\\a\\\"'",
+    "PROMPT_COMMAND='printf \\\"\\e]777;KUBECLI_READY\\a\\\"'",
     "PS1='\\033[32m\\u@\\h\\033[0m \\033[37m\\033[4m\\w\\033[24m\\033[0m \\$ '",
     ...common,
   ].join(';') + ';\n';
@@ -265,7 +312,7 @@ function createWindow() {
     minWidth: 760,
     minHeight: 460,
     backgroundColor: '#35435a',
-    title: 'KubeCLI Terminal',
+    title: 'K8sOps Terminal',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: false,
@@ -282,6 +329,125 @@ function createWindow() {
     sessions.clear();
     win = null;
   });
+}
+
+function sendMenuCommand(command) {
+  win?.webContents.send('menu-command', command);
+}
+
+function createApplicationMenu() {
+  const commandItem = (label, command) => ({ label, click: () => sendMenuCommand({ type: 'command', command }) });
+  const actionItem = (label, action) => ({ label, click: () => sendMenuCommand({ type: 'action', action }) });
+  const actionsMenu = [
+    { label: 'Recursos', submenu: [
+      commandItem('Pods', 'kubectl get pods'),
+      commandItem('Services', 'kubectl get services'),
+      commandItem('Deployments', 'kubectl get deployments'),
+      commandItem('Events', 'kubectl get events --sort-by=.lastTimestamp'),
+      commandItem('Nodes', 'kubectl get nodes'),
+    ] },
+    { label: 'Operações', submenu: [
+      actionItem('Logs de pod', 'logs'),
+      actionItem('Describe de pod', 'describe'),
+      actionItem('Rollout status', 'rollout-status'),
+      actionItem('Rollout restart', 'rollout-restart'),
+      actionItem('Entrar no pod', 'exec'),
+      actionItem('Port-forward', 'port-forward'),
+      actionItem('Escalar recurso', 'scale'),
+      actionItem('Editar YAML', 'yaml-edit'),
+    ] },
+    { label: 'Diagnóstico', submenu: [
+      commandItem('Uso dos pods', 'kubectl top pods'),
+      commandItem('Uso dos nodes', 'kubectl top nodes'),
+      commandItem('Cluster info', 'kubectl cluster-info'),
+      commandItem('Pods de todos namespaces', 'kubectl get pods -A'),
+      commandItem('Eventos do cluster', 'kubectl get events -A --sort-by=.lastTimestamp'),
+      commandItem('Permissões atuais', 'kubectl auth can-i --list'),
+    ] },
+    { label: 'Ferramentas', submenu: [
+      actionItem('Cadastrar alias', 'alias-add'),
+      actionItem('Remover alias', 'alias-remove'),
+      commandItem('Ferramentas', 'kubecli list'),
+      commandItem('Limpar terminal', 'clear'),
+    ] },
+    { label: 'Sessões', submenu: [actionItem('Nova aba', 'new-tab')] },
+  ];
+  const template = [
+    {
+      label: 'K8sOps',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: 'Configurações do terminal', click: () => sendMenuCommand('settings') },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'K8s',
+      submenu: [
+        { label: 'Escolher kubeconfig…', click: () => sendMenuCommand('choose-kubeconfig') },
+        { label: 'Editar kubeconfig', click: () => sendMenuCommand('edit-kubeconfig') },
+        { type: 'separator' },
+        { label: 'Adicionar cluster', click: () => sendMenuCommand('add-cluster') },
+        { label: 'Remover cluster', click: () => sendMenuCommand('remove-cluster') },
+      ],
+    },
+    {
+      label: 'Operações',
+      submenu: [
+        ...actionsMenu,
+        { type: 'separator' },
+        { label: 'Nova aba', accelerator: 'CmdOrCtrl+T', click: () => sendMenuCommand({ type: 'action', action: 'new-tab' }) },
+        { label: 'Fechar aba', accelerator: 'CmdOrCtrl+W', click: () => sendMenuCommand('close-tab') },
+      ],
+    },
+    {
+      label: 'Histórico',
+      submenu: [
+        { label: 'Abrir histórico', click: () => sendMenuCommand('history') },
+        { label: 'Limpar histórico', click: () => sendMenuCommand('clear-history') },
+      ],
+    },
+    {
+      label: 'Configurações',
+      submenu: [
+        { label: 'Configurações do terminal', click: () => sendMenuCommand('settings') },
+        { label: 'Instruções', click: () => sendMenuCommand('instructions') },
+      ],
+    },
+    {
+      label: 'IA',
+      submenu: [
+        { label: 'Escolher agente', click: () => sendMenuCommand('choose-agent') },
+        { label: 'Iniciar troubleshooting com IA', click: () => sendMenuCommand('ai') },
+        { label: 'Configurar modelos e APIs', click: () => sendMenuCommand('ai-settings') },
+        { label: 'Configurar servidores MCP', click: () => sendMenuCommand('mcp-settings') },
+      ],
+    },
+    {
+      label: 'Editar',
+      submenu: [
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'Janela',
+      submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }],
+    },
+    {
+      label: 'Ajuda',
+      submenu: [{ label: 'Instruções do K8sOps', click: () => sendMenuCommand('instructions') }],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
@@ -327,12 +493,28 @@ function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
     temporary: isolated.temporary,
     agentPath: null,
     aiSession: aiSessionPath(id),
+    outputBuffer: '',
+    outputTimer: null,
+    stateRefreshTimer: null,
+    stateRefreshInFlight: false,
+    stateRefreshPending: false,
+    lastState: null,
   });
   session.write(shellInit(shellPath));
   session.onData((data) => {
     const output = String(data);
-    win?.webContents.send('terminal-data', { id, data: output });
-    if (output.includes('\u001b]777;KUBECLI_READY\u0007')) publishSessionState(id);
+    const current = sessions.get(id);
+    if (!current || current.pty !== session) return;
+    current.outputBuffer += output;
+    if (current.outputTimer) return;
+    current.outputTimer = setTimeout(() => {
+      current.outputTimer = null;
+      if (sessions.get(id) !== current) return;
+      const buffered = current.outputBuffer;
+      current.outputBuffer = '';
+      win?.webContents.send('terminal-data', { id, data: buffered });
+      if (buffered.includes('\u001b]777;KUBECLI_READY\u0007')) publishSessionState(id);
+    }, 8);
   });
   session.onExit(({ exitCode }) => {
     if (sessions.get(id)?.pty !== session) return;
@@ -534,5 +716,6 @@ ipcMain.handle('reset-settings', () => {
 });
 ipcMain.handle('get-kube-state', (_event, { id = 'main' } = {}) => readSessionState(id));
 
-app.whenReady().then(() => { loadSettings(); createWindow(); });
+app.whenReady().then(() => { migrateLegacyUserData(); loadSettings(); createApplicationMenu(); createWindow(); });
+app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

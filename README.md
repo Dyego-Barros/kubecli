@@ -59,7 +59,7 @@ Os atalhos abaixo são equivalentes:
 
 | KubeCLI | Comando executado |
 | --- | --- |
-| `kubecli k ...` ou `kubecli kc ...` | `kubectl ...` |
+| `kubecli k ...` | `kubectl ...` |
 | `kubecli po ...` ou `kubecli pods ...` | `kubectl get pods ...` |
 | `kubecli svc ...` | `kubectl get services ...` |
 | `kubecli deploy ...` | `kubectl get deployments ...` |
@@ -237,6 +237,30 @@ npm run dist:deb
 O aplicativo desktop usa o kubeconfig padrão em `~/.kube/config` ao iniciar.
 O botão **Escolher kubeconfig** permite selecionar outro arquivo.
 
+### Arquivos de configuração do aplicativo
+
+O K8sOps salva as configurações fora da pasta de instalação. No macOS:
+
+```text
+~/Library/Application Support/k8sops-desktop/
+```
+
+Nesse diretório ficam `ai-settings.json` (modelos, provedores e MCP),
+`ai-config.toml` (configuração de IA usada pela CLI), `settings.json`
+(tema, fonte, scrollback e perfis) e `ai-sessions/` (sessões de IA por aba).
+
+Arquivos compartilhados com a CLI:
+
+```text
+~/.config/kubecli/ai-config.toml
+~/.config/kubecli/aliases.json
+~/.kube/config
+```
+
+Os tokens dos modelos são protegidos pelo Keychain do macOS. Os kubeconfigs
+temporários usados para isolar as abas ficam na pasta temporária do sistema e
+são removidos ao encerrar as sessões.
+
 ## Ajuda
 
 ## Troubleshooting com IA
@@ -245,7 +269,7 @@ A CLI permite selecionar um `AGENTS.md` por usuário e iniciar uma sessão de di
 Os modelos configurados são usados em ordem: quando o primeiro atinge quota, limite ou
 rate limit, a solicitação passa para o próximo, sem chamadas simultâneas.
 
-Configure até três modelos em `~/.config/kubecli/config.toml`:
+Configure até três modelos em `~/.config/kubecli/ai-config.toml`:
 
 ```toml
 [[models]]

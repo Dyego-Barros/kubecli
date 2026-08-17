@@ -22,6 +22,33 @@ const terminalTheme = {
 const sessions = new Map();
 let activeSessionId = 'main';
 let currentSettings;
+const defaultTabLabel = '~ — zsh — 120×30';
+let commandHistory = loadCommandHistory();
+let historySaveTimer = null;
+
+function loadCommandHistory() {
+  try {
+    const value = JSON.parse(localStorage.getItem(historyKey) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+function scheduleHistorySave() {
+  if (historySaveTimer) return;
+  historySaveTimer = setTimeout(() => {
+    saveHistoryNow();
+  }, 250);
+}
+
+function saveHistoryNow() {
+  if (historySaveTimer) clearTimeout(historySaveTimer);
+  historySaveTimer = null;
+  localStorage.setItem(historyKey, JSON.stringify(commandHistory));
+}
+
+window.addEventListener('beforeunload', saveHistoryNow);
 const themes = {
   midnight: { background: '#35435a', cursor: '#b7bdc7', selectionBackground: '#52627b' },
   light: { background: '#f4f5f7', cursor: '#20262f', selectionBackground: '#b9cbe3' },
@@ -60,6 +87,7 @@ function renderTabs() {
     tab.type = 'button';
     tab.className = `terminal-tab${id === activeSessionId ? ' active' : ''}`;
     tab.dataset.tabId = id;
+    tab.title = 'Duplo clique para renomear';
     tab.textContent = session.label;
     if (id !== 'main') {
       const close = document.createElement('span');
@@ -73,8 +101,19 @@ function renderTabs() {
       tab.appendChild(close);
     }
     tab.addEventListener('click', () => switchSession(id));
+    tab.addEventListener('dblclick', (event) => {
+      if (event.target.closest('.tab-close')) return;
+      openAction('rename-tab', id);
+    });
     tabs.appendChild(tab);
   });
+  const addTab = document.createElement('button');
+  addTab.type = 'button';
+  addTab.className = 'tab-new';
+  addTab.textContent = '+';
+  addTab.title = 'Nova aba';
+  addTab.addEventListener('click', () => openAction('new-tab'));
+  tabs.appendChild(addTab);
 }
 
 function switchSession(id) {
@@ -86,6 +125,7 @@ function switchSession(id) {
   renderTabs();
   resize();
   activeSession().terminal.focus();
+  flushTerminalOutput(activeSession());
   showConfig(activeSession().kubeconfig);
   showAgent(activeSession().agentPath);
   renderState(activeSession().state);
@@ -104,7 +144,7 @@ function createSession(id, label, sessionKubeconfig = '') {
     fontFamily: 'Menlo, Monaco, monospace',
     fontSize: 14,
     lineHeight: 1.28,
-    scrollback: 10000,
+    scrollback: 5000,
     theme: terminalTheme,
   });
   const fit = new FitAddon();
@@ -113,29 +153,66 @@ function createSession(id, label, sessionKubeconfig = '') {
   const session = {
     id, label, element, terminal, fit, kubeconfig: sessionKubeconfig, runtimeKubeconfig: sessionKubeconfig,
     commandRunning: false,
+    interactiveCommand: false,
+    continuationBuffer: '',
+    outputBuffer: '',
+    outputScheduled: false,
     state: { context: 'sem-contexto', namespace: 'default' },
     agentPath: null,
     aiSession: null,
   };
   sessions.set(id, session);
+  function finishInteractiveCommand() {
+    session.commandRunning = false;
+    session.interactiveCommand = false;
+    session.continuationBuffer = '';
+  }
   terminal.attachCustomKeyEventHandler((event) => {
-    if (!session.commandRunning) return true;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') return true;
-    return false;
+    if (session.commandRunning && session.interactiveCommand) {
+      const key = event.key.toLowerCase();
+      if (event.ctrlKey && event.shiftKey && key === 'q') {
+        ipcRenderer.send('terminal-input', { id, data: 'exit\r' });
+        finishInteractiveCommand();
+        return false;
+      }
+      if (event.ctrlKey && key === 'd') {
+        ipcRenderer.send('terminal-input', { id, data: '\u0004' });
+        finishInteractiveCommand();
+        return false;
+      }
+      if (event.ctrlKey && key === 'c') {
+        ipcRenderer.send('terminal-input', { id, data: '\u0003' });
+        return false;
+      }
+    }
+    return true;
   });
   terminal.onData((data) => {
-    if (session.commandRunning) {
-      if (data === '\u0003') ipcRenderer.send('terminal-input', { id, data });
+    // Control-C and Control-D must reach the PTY immediately. They are not
+    // text input and must never wait for the multiline paste buffer.
+    if (data === '\u0003' || data === '\u0004') {
+      session.continuationBuffer = '';
+      ipcRenderer.send('terminal-input', { id, data });
+      if (data === '\u0004') finishInteractiveCommand();
       return;
     }
-    const pastedContinuation = /\\(?:\r\n|\r|\n)/.test(data);
-    let terminalInput = data;
-    if (pastedContinuation) {
-      terminalInput = data.replace(/\\(?:\r\n|\r|\n)/g, ' ');
-      if (!terminalInput.endsWith('\r') && !terminalInput.endsWith('\n')) terminalInput += '\r';
+    // Preserve native interactive typing. Only hold a trailing backslash so a
+    // paste split across PTY data events can still normalize `\\\n` correctly.
+    session.continuationBuffer += data;
+    const hasLineEnd = /\r|\n/.test(session.continuationBuffer);
+    const waitingForContinuation = session.continuationBuffer.endsWith('\\');
+    if (!hasLineEnd && waitingForContinuation) return;
+    let terminalInput = session.continuationBuffer;
+    session.continuationBuffer = '';
+    // Match shell continuation semantics: backslash + newline disappears.
+    terminalInput = terminalInput.replace(/\\(?:\r\n|\r|\n)/g, '');
+    const exitingInteractive = session.interactiveCommand && /^(?:exit|logout)\s*$/i.test(terminalInput.trim());
+    if (terminalInput.includes('\r') || terminalInput.includes('\n')) {
+      session.commandRunning = true;
+      session.interactiveCommand = isInteractiveCommand(terminalInput.trim());
     }
-    if (terminalInput.includes('\r')) session.commandRunning = true;
     ipcRenderer.send('terminal-input', { id, data: terminalInput });
+    if (exitingInteractive) finishInteractiveCommand();
   });
   if (currentSettings) applySettings(currentSettings);
   renderTabs();
@@ -167,8 +244,10 @@ async function closeSession(id) {
 
 async function createTab(label = '') {
   const id = `tab-${Date.now()}`;
-  const tabLabel = label.trim() || `Terminal ${sessions.size + 1}`;
-  const source = activeSession()?.runtimeKubeconfig || activeSession()?.kubeconfig;
+  const tabLabel = label.trim() || defaultTabLabel;
+  // Uma nova aba deve começar pelo kubeconfig-base selecionado, nunca pela
+  // cópia runtime da aba ativa, que pode ter outro contexto/namespace.
+  const source = activeSession()?.kubeconfig;
   createSession(id, tabLabel, source || '');
   await ipcRenderer.invoke('create-terminal', { id, kubeconfig: source });
   switchSession(id);
@@ -212,17 +291,22 @@ function sendCommand(command) {
     session.terminal.scrollToBottom();
     return;
   }
-  const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
-  localStorage.setItem(historyKey, JSON.stringify([command, ...history.filter((item) => item !== command)].slice(0, 100)));
+  commandHistory = [command, ...commandHistory.filter((item) => item !== command)].slice(0, 100);
+  scheduleHistorySave();
   session.commandRunning = true;
+  session.interactiveCommand = isInteractiveCommand(command);
   ipcRenderer.send('terminal-input', { id: activeSessionId, data: `${command}\r` });
+}
+
+function isInteractiveCommand(command) {
+  return /(?:^|\s)(?:kubectl|k)\s+(?:edit\b|exec\b[\s\S]*(?:\s-i(?:t)?|\s--stdin\b)(?:\s|$)|port-forward\b)/.test(command)
+    || /(?:^|\s)kubecli\s+exec\b/.test(command);
 }
 
 function renderHistory() {
   const list = document.getElementById('history-list');
-  const history = JSON.parse(localStorage.getItem(historyKey) || '[]');
-  list.innerHTML = history.length
-    ? history.map((command) => `<button class="history-item" data-command="${command.replaceAll('"', '&quot;')}">${command}</button>`).join('')
+  list.innerHTML = commandHistory.length
+    ? commandHistory.map((command) => `<button class="history-item" data-command="${command.replaceAll('"', '&quot;')}">${command}</button>`).join('')
     : '<p class="history-empty">Nenhum comando executado ainda.</p>';
   list.querySelectorAll('[data-command]').forEach((item) => item.addEventListener('click', () => {
     sendCommand(item.dataset.command);
@@ -272,13 +356,32 @@ function closeOverlays() {
   document.getElementById('kubeconfig-toggle')?.setAttribute('aria-expanded', 'false');
 }
 
-ipcRenderer.on('terminal-data', (_event, { id, data }) => {
+function queueTerminalOutput(id, data) {
   const session = sessions.get(id);
   if (!session) return;
-  session.terminal.write(data);
-  if (session.commandRunning && data.includes('\u001b]777;KUBECLI_READY\u0007')) session.commandRunning = false;
-  if (data.includes('\u001b]777;KUBECLI_READY\u0007') && id === activeSessionId) updateState(id);
-});
+  session.outputBuffer += data;
+  if (id !== activeSessionId) return;
+  if (session.outputScheduled) return;
+  session.outputScheduled = true;
+  requestAnimationFrame(() => {
+    session.outputScheduled = false;
+    const output = session.outputBuffer;
+    session.outputBuffer = '';
+    session.terminal.write(output);
+    if (session.commandRunning && output.includes('\u001b]777;KUBECLI_READY\u0007')) {
+      session.commandRunning = false;
+      session.interactiveCommand = false;
+    }
+    if (output.includes('\u001b]777;KUBECLI_READY\u0007') && id === activeSessionId) updateState(id);
+  });
+}
+function flushTerminalOutput(session) {
+  if (!session?.outputBuffer) return;
+  const output = session.outputBuffer;
+  session.outputBuffer = '';
+  session.terminal.write(output);
+}
+ipcRenderer.on('terminal-data', (_event, { id, data }) => queueTerminalOutput(id, data));
 ipcRenderer.on('terminal-state', (_event, { id, state }) => {
   const session = sessions.get(id);
   if (!session) return;
@@ -286,7 +389,7 @@ ipcRenderer.on('terminal-state', (_event, { id, state }) => {
   if (id === activeSessionId) renderState(state);
 });
 ipcRenderer.on('terminal-config', (_event, data) => {
-  const session = createSession(data.id, data.id === 'main' ? 'Terminal 1' : `Terminal ${sessions.size + 1}`, data.kubeconfig);
+  const session = createSession(data.id, defaultTabLabel, data.kubeconfig);
   session.kubeconfig = data.kubeconfig;
   session.runtimeKubeconfig = data.runtimeKubeconfig || data.kubeconfig;
   session.agentPath = data.agentPath || null;
@@ -307,6 +410,38 @@ ipcRenderer.on('ai-config', (_event, data) => {
 });
 ipcRenderer.on('terminal-exit', (_event, { id, code }) => sessions.get(id)?.terminal.write(`\r\n[processo encerrado: ${code}]\r\n`));
 ipcRenderer.on('terminal-error', (_event, { id, message }) => sessions.get(id)?.terminal.write(`\r\n[erro ao iniciar terminal: ${message}]\r\n`));
+ipcRenderer.on('menu-command', (_event, command) => {
+  if (command?.type === 'command') {
+    sendCommand(command.command);
+    return;
+  }
+  if (command?.type === 'action') {
+    openAction(command.action);
+    return;
+  }
+  const controls = {
+    ai: 'ai',
+    'ai-settings': 'ai-settings',
+    'mcp-settings': 'mcp-settings',
+    quick: 'quick',
+    history: 'history',
+    settings: 'settings',
+    instructions: 'instructions',
+    'choose-kubeconfig': 'choose',
+    'edit-kubeconfig': 'edit',
+    'add-cluster': 'add-cluster',
+    'remove-cluster': 'remove-cluster',
+  };
+  if (controls[command]) document.getElementById(controls[command])?.click();
+  if (command === 'clear-history') {
+    commandHistory = [];
+    scheduleHistorySave();
+    renderHistory();
+  }
+  if (command === 'new-tab') openAction('new-tab');
+  if (command === 'close-tab') closeSession(activeSessionId);
+  if (command === 'choose-agent') chooseAgent();
+});
 window.addEventListener('resize', resize);
 
 document.getElementById('choose').addEventListener('click', async () => {
@@ -314,16 +449,20 @@ document.getElementById('choose').addEventListener('click', async () => {
   showConfig(result.kubeconfig);
   updateState(activeSessionId);
 });
+async function chooseAgent() {
+  const session = activeSession();
+  if (!session) return false;
+  const selected = await ipcRenderer.invoke('choose-agent', { id: activeSessionId });
+  if (selected.error || !selected.agentPath) return false;
+  session.agentPath = selected.agentPath;
+  session.aiSession = selected.aiSession;
+  showAgent(session.agentPath);
+  return true;
+}
 document.getElementById('ai').addEventListener('click', async () => {
   const session = activeSession();
   if (!session) return;
-  if (!session.agentPath) {
-    const selected = await ipcRenderer.invoke('choose-agent', { id: activeSessionId });
-    if (selected.error || !selected.agentPath) return;
-    session.agentPath = selected.agentPath;
-    session.aiSession = selected.aiSession;
-    showAgent(session.agentPath);
-  }
+  if (!session.agentPath && !await chooseAgent()) return;
   const request = window.prompt('Descreva o problema para o agente:');
   if (!request?.trim()) return;
   const state = session.state || {};
@@ -522,7 +661,8 @@ document.getElementById('history-modal').addEventListener('click', (event) => {
   if (event.target.id === 'history-modal') event.currentTarget.hidden = true;
 });
 document.getElementById('clear-history').addEventListener('click', () => {
-  localStorage.removeItem(historyKey);
+  commandHistory = [];
+  scheduleHistorySave();
   renderHistory();
 });
 const actionDefinitions = {
@@ -537,12 +677,14 @@ const actionDefinitions = {
   'alias-add': { title: 'Cadastrar alias', fields: ['alias-name', 'alias-command', 'alias-args'], command: (v) => `kubecli aliases add ${v.aliasName} ${v.aliasCommand}${v.aliasArgs ? ` ${v.aliasArgs}` : ''}` },
   'alias-remove': { title: 'Remover alias', fields: ['alias-name'], command: (v) => `kubecli aliases remove ${v.aliasName}` },
   'new-tab': { title: 'Nova aba', fields: ['tab-name'], command: () => '' },
+  'rename-tab': { title: 'Renomear aba', fields: ['tab-name'], command: () => '' },
 };
-function openAction(action) {
+function openAction(action, tabId = activeSessionId) {
   const definition = actionDefinitions[action];
   if (!definition) return;
   document.getElementById('action-title').textContent = definition.title;
   document.getElementById('action-form').dataset.action = action;
+  document.getElementById('action-form').dataset.tabId = tabId;
   ['target', 'command', 'local-port', 'remote-port', 'replicas', 'extra', 'alias-name', 'alias-command', 'alias-args', 'tab-name'].forEach((field) => {
     const visible = definition.fields.includes(field);
     document.getElementById(`action-${field}-label`).hidden = !visible;
@@ -551,6 +693,9 @@ function openAction(action) {
   });
   document.getElementById('action-form').reset();
   document.getElementById('action-command').value = '/bin/sh';
+  if (action === 'rename-tab') {
+    document.getElementById('action-tab-name').value = sessions.get(tabId)?.label || '';
+  }
   document.getElementById('action-result').hidden = true;
   document.getElementById('action-modal').hidden = false;
   document.querySelector('#action-form label:not([hidden]) input, #action-form label:not([hidden]) select')?.focus();
@@ -587,6 +732,15 @@ document.getElementById('action-form').addEventListener('submit', (event) => {
   };
   if (action === 'new-tab') {
     createTab(values.tabName);
+    document.getElementById('action-modal').hidden = true;
+    return;
+  }
+  if (action === 'rename-tab') {
+    const session = sessions.get(event.currentTarget.dataset.tabId);
+    if (session && values.tabName) {
+      session.label = values.tabName;
+      renderTabs();
+    }
     document.getElementById('action-modal').hidden = true;
     return;
   }

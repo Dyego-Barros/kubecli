@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 import tomllib
@@ -47,5 +48,15 @@ def load_config(path: Path | None = None) -> tuple[list[ModelConfig], list[McpCo
     models.sort(key=lambda item: item.order)
     mcp_servers = []
     for item in raw.get("mcp", {}).get("servers", raw.get("mcp_servers", [])):
-        mcp_servers.append(McpConfig(args=tuple(item.get("args", [])), **{k: v for k, v in item.items() if k != "args"}))
+        raw_args = item.get("args", [])
+        if isinstance(raw_args, str):
+            try:
+                args = tuple(shlex.split(raw_args))
+            except ValueError as error:
+                raise ValueError(f"MCP {item.get('name', 'sem nome')}: argumentos inválidos: {error}") from error
+        elif isinstance(raw_args, (list, tuple)):
+            args = tuple(str(value) for value in raw_args)
+        else:
+            raise ValueError(f"MCP {item.get('name', 'sem nome')}: args deve ser texto ou lista.")
+        mcp_servers.append(McpConfig(args=args, **{k: v for k, v in item.items() if k != "args"}))
     return models[:3], mcp_servers

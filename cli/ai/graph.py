@@ -30,7 +30,7 @@ class AgentState(TypedDict):
 class GraphState(TypedDict):
     messages: Annotated[list, add_messages]
     tool_rounds: int
-    phase: Literal["collect", "diagnose", "act", "propose"]
+    phase: Literal["collect", "act", "propose"]
 
 
 def _system_prompt(session: Session) -> str:
@@ -77,6 +77,10 @@ def _evidence_from_messages(messages) -> str:
             continue
         evidence.append(_text_content(item)[:12000])
     return "\n\n".join(evidence)
+
+
+def _progress(message: str) -> None:
+    print(f"[IA] {message}", flush=True)
 
 
 def _confirm_modifying_command(command: list[str]) -> bool:
@@ -185,6 +189,8 @@ async def _build_graph(session: Session, models: list[ModelConfig], servers=None
             *state["messages"],
         ]
         tool_rounds = state.get("tool_rounds", 0)
+        if tool_rounds == 0:
+            _progress("coletando evidências")
         failures = []
         if tool_rounds >= 8:
             return {
@@ -196,7 +202,7 @@ async def _build_graph(session: Session, models: list[ModelConfig], servers=None
                         )
                     )
                 ],
-                "phase": "diagnose",
+                "phase": "act",
             }
         for provider, model in collector_models:
             try:
@@ -227,32 +233,6 @@ async def _build_graph(session: Session, models: list[ModelConfig], servers=None
                 continue
         raise ModelError("Todos os modelos falharam: " + ", ".join(failures))
 
-    async def diagnose(state: GraphState):
-        evidence = _evidence_from_messages(state["messages"])
-        prompt = f"""Você está na etapa DIAGNÓSTICO de um troubleshooting Kubernetes.
-
-Sessão: contexto={session.context or 'não informado'}, namespace={session.namespace}.
-Analise somente as evidências reais abaixo. Separe fatos observados de hipóteses,
-aponte a causa provável dos restarts e informe o nível de confiança. Não invente
-comandos, saídas ou causas que não estejam sustentadas pelas evidências.
-
-EVIDÊNCIAS:
-{evidence or 'Nenhuma evidência de ferramenta foi coletada.'}
-"""
-        failures = []
-        for provider, model in analysis_models:
-            try:
-                response = await model.ainvoke(
-                    [SystemMessage(content=_system_prompt(session)), *state["messages"], HumanMessage(content=prompt)]
-                )
-                if not _text_content(response).strip():
-                    raise ModelError(f"{provider} retornou diagnóstico vazio.")
-                session.models_used.append(provider)
-                return {"messages": [response], "phase": "diagnose"}
-            except Exception as error:
-                failures.append(f"{provider}: {type(error).__name__}")
-        raise ModelError("Todos os modelos falharam no diagnóstico: " + ", ".join(failures))
-
     async def act(state: GraphState):
         """Decide requested changes through the guarded tool, never by text."""
         prompt = """Você está na etapa AÇÃO AUTORIZÁVEL do troubleshooting.
@@ -261,14 +241,16 @@ O pedido original do usuário está na conversa. Verifique se ele pediu para
 resolver/corrigir/reiniciar/fazer rollout e se o diagnóstico mostra que uma ação
 modificadora é necessária. Se sim, chame run_kubectl agora com UM comando exato;
 não escreva o comando como texto. O executor exibirá a confirmação no terminal.
-Se não houver necessidade ou autorização implícita suficiente no pedido, responda
-sem chamar ferramenta e encaminhe para a proposta. Nunca diga que uma ação foi
-recusada ou executada sem uma mensagem de ferramenta comprovando isso.
+Analise também as evidências coletadas para determinar a causa provável. Se não
+houver necessidade ou autorização implícita suficiente no pedido, responda sem
+chamar ferramenta e encaminhe para a síntese. Nunca diga que uma ação foi recusada
+ou executada sem uma mensagem de ferramenta comprovando isso.
 """
         messages = [SystemMessage(content=_system_prompt(session)), *state["messages"], HumanMessage(content=prompt)]
+        _progress("avaliando se alguma ação solicitada é necessária")
         failures = []
         if state.get("tool_rounds", 0) >= 8:
-            return {"messages": [HumanMessage(content="Não execute novas ações; encaminhe para a proposta.")], "phase": "propose"}
+            return {"messages": [HumanMessage(content="Não execute novas ações; encaminhe para a síntese.")], "phase": "propose"}
         for provider, model in collector_models:
             try:
                 response = await model.ainvoke(messages)
@@ -288,9 +270,11 @@ recusada ou executada sem uma mensagem de ferramenta comprovando isso.
 
     async def propose(state: GraphState):
         evidence = _evidence_from_messages(state["messages"])
-        prompt = f"""Você está na etapa PROPOSTA DE SOLUÇÃO de um troubleshooting Kubernetes.
+        _progress("gerando síntese final")
+        prompt = f"""Você está na etapa SÍNTESE FINAL de um troubleshooting Kubernetes.
 
-Com base apenas no diagnóstico e nas evidências da conversa, responda em português
+Determine o diagnóstico a partir das evidências e da análise da etapa anterior.
+Com base apenas nisso, responda em português
 com exatamente estas seções:
 
 ### Diagnóstico
@@ -327,21 +311,19 @@ EVIDÊNCIAS COLETADAS:
     workflow = StateGraph(GraphState)
     workflow.add_node("collect", collect)
     workflow.add_node("tools", ToolNode(collector_tools, handle_tool_errors=True))
-    workflow.add_node("diagnose", diagnose)
     workflow.add_node("act", act)
     workflow.add_node("propose", propose)
     workflow.add_edge(START, "collect")
     workflow.add_conditional_edges(
         "collect",
-        lambda state: "tools" if state.get("phase") == "collect" and tools_condition(state) == "tools" else "diagnose",
-        {"tools": "tools", "diagnose": "diagnose"},
+        lambda state: "tools" if state.get("phase") == "collect" and tools_condition(state) == "tools" else "act",
+        {"tools": "tools", "act": "act"},
     )
     workflow.add_conditional_edges(
         "tools",
         lambda state: "act" if state.get("phase") == "act" else "collect",
         {"act": "act", "collect": "collect"},
     )
-    workflow.add_edge("diagnose", "act")
     workflow.add_conditional_edges(
         "act",
         lambda state: "tools" if tools_condition(state) == "tools" else "propose",

@@ -3,26 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KubeCLI Terminal</title>
+  <title>K8sOps Terminal</title>
   <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
   <header>
-    <strong>KubeCLI</strong>
+    <strong>K8sOps</strong>
     <span id="context" class="context" title="Contexto atual">sem-contexto</span>
     <span class="divider">|</span>
     <span id="namespace" class="namespace" title="Namespace atual">default</span>
     <span id="config" title="Kubeconfig atual"></span>
-    <button id="ai" title="Iniciar troubleshooting com IA">IA</button>
-    <button id="ai-settings" title="Configurar APIs e modelos de IA">Config IA</button>
-    <button id="mcp-settings" title="Configurar servidores MCP">MCP</button>
+    <button id="ai" hidden title="Iniciar troubleshooting com IA">IA</button>
+    <button id="ai-settings" hidden title="Configurar APIs e modelos de IA">Config IA</button>
+    <button id="mcp-settings" hidden title="Configurar servidores MCP">MCP</button>
     <span id="agent-name" class="context" title="AGENTS.md da aba atual">nenhum</span>
-    <button id="quick">Ações</button>
-    <button id="history">Histórico</button>
-    <button id="settings">Configurações</button>
-    <button id="instructions">Instruções</button>
-    <div class="header-menu">
+    <button id="quick" hidden>Ações</button>
+    <button id="history" hidden>Histórico</button>
+    <button id="settings" hidden>Configurações</button>
+    <button id="instructions" hidden>Instruções</button>
+    <div class="header-menu" hidden>
       <button id="kubeconfig-toggle" type="button" aria-expanded="false">Kubeconfig</button>
       <div id="kubeconfig-menu" class="header-dropdown" hidden>
         <button id="edit" type="button">Editar kubeconfig</button>
@@ -232,15 +232,21 @@
   <section id="instructions-modal" class="help-modal" hidden>
     <div class="help-card">
       <div class="help-title">
-        <strong>Instruções do KubeCLI</strong>
+        <strong>Instruções do K8sOps</strong>
         <button id="close-instructions">Fechar</button>
       </div>
       <div class="help-content">
         <h3>Como funciona</h3>
-        <p>O KubeCLI reúne os comandos Kubernetes, OpenShift, cloud e gerenciamento de ferramentas em um único terminal. Os prefixos são opcionais no app.</p>
+        <p>O K8sOps reúne os comandos Kubernetes, OpenShift, cloud e gerenciamento de ferramentas em um único terminal. Os prefixos são opcionais no app.</p>
 
         <h3>Comandos Kubernetes</h3>
         <code>k get pods</code><span>Atalho para <b>kubectl get pods</b></span>
+        <code>kgp</code><span>Lista pods no namespace atual</span>
+        <code>kgn</code><span>Lista nodes do cluster</span>
+        <code>kdesc RECURSO</code><span>Atalho para <b>kubectl describe RECURSO</b></span>
+        <code>kl POD</code><span>Atalho para <b>kubectl logs POD</b></span>
+        <code>kevents</code><span>Lista eventos ordenados por data</span>
+        <code>kroll RECURSO</code><span>Atalho para <b>kubectl rollout status RECURSO</b></span>
         <code>get pods -A</code><span>Executa <b>kubectl get pods -A</b></span>
         <code>pods</code><span>Lista pods no namespace atual</span>
         <code>svc</code><span>Lista services</span>
@@ -250,6 +256,7 @@
         <code>logs POD</code><span>Exibe logs de um pod</span>
         <code>describe pod/POD</code><span>Detalha um recurso</span>
         <code>kubectl COMANDO</code><span>Passa qualquer comando diretamente ao kubectl</span>
+        <p>O alias recomendado para comandos Kubernetes é <code>k</code>.</p>
 
         <h3>Contexto e namespace</h3>
         <code>ctx</code><span>Lista contextos</span>
@@ -287,6 +294,30 @@
         <code>aliases remove NOME</code><span>Remove alias personalizado</span>
         <p>Aliases personalizados ficam em <code>~/.config/kubecli/aliases.json</code>.</p>
 
+        <h3>Aliases disponíveis no shell</h3>
+        <code>k</code><span>Alias principal para <b>kubectl</b></span>
+        <code>get</code><span>Alias para <b>kubectl get</b></span>
+        <code>pods</code> / <code>po</code><span>Aliases para <b>kubectl get pods</b></span>
+        <code>svc</code><span>Alias para <b>kubectl get services</b></span>
+        <code>deploy</code><span>Alias para <b>kubectl get deployments</b></span>
+        <code>nodes</code><span>Alias para <b>kubectl get nodes</b></span>
+        <code>ctx</code> / <code>x</code><span>Aliases para gerenciamento de contextos</span>
+        <code>ns</code> / <code>n</code><span>Aliases para gerenciamento de namespaces</span>
+        <code>install</code><span>Alias para <b>kubecli install</b></span>
+        <code>uninstall</code><span>Alias para <b>kubecli uninstall</b></span>
+        <code>kubeconfig</code><span>Alias para <b>kubecli kubeconfig</b></span>
+
+        <h3>Inteligência artificial e MCP</h3>
+        <code>kubecli ai agents</code><span>Lista arquivos AGENTS.md disponíveis</span>
+        <code>kubecli ai models</code><span>Lista os modelos de IA configurados</span>
+        <code>kubecli ai list</code><span>Alias de <b>ai models</b></span>
+        <code>kubecli ai mcp list</code><span>Lista servidores MCP configurados</span>
+        <code>kubecli ai mcp test</code><span>Testa os servidores MCP configurados</span>
+        <code>kubecli ai start --agent AGENTS.md</code><span>Inicia uma sessão de troubleshooting</span>
+        <code>kubecli ai ask "PROBLEMA"</code><span>Envia uma pergunta ou problema para a sessão atual</span>
+        <code>kubecli ai history</code><span>Mostra agente, contexto, modelos e última resposta</span>
+        <p>No desktop, use o menu <b>IA</b> para escolher o agente, configurar modelos e APIs ou configurar servidores MCP.</p>
+
         <h3>Cloud</h3>
         <code>cloud login azurecli</code><span>Executa <b>az login</b></span>
         <code>cloud configure awscli</code><span>Executa <b>aws configure</b></span>
@@ -311,6 +342,8 @@
         <code>⌘T</code><span>Abre uma nova aba</span>
         <code>⌘W</code><span>Fecha a aba atual</span>
         <code>Ctrl+C</code><span>Interrompe o comando atual</span>
+        <code>Ctrl+Shift+Q</code><span>Sai do shell interativo do pod</span>
+        <code>Ctrl+D</code><span>Envia EOF para sair do shell interativo</span>
         <code>clear</code><span>Limpa o terminal</span>
         <code>Enter</code><span>Executa o comando digitado</span>
       </div>

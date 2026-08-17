@@ -1,6 +1,6 @@
 COMMANDS = {"kubectl": "kubectl", "kubens": "kubens", "kubectx": "kubectx", "oc": "oc"}
 COMMAND_ALIASES = {
-    "k": ("kubectl", []), "kc": ("kubectl", []), "po": ("kubectl", ["get", "pods"]),
+    "k": ("kubectl", []), "po": ("kubectl", ["get", "pods"]),
     "pods": ("kubectl", ["get", "pods"]), "svc": ("kubectl", ["get", "services"]),
     "deploy": ("kubectl", ["get", "deployments"]), "nodes": ("kubectl", ["get", "nodes"]),
     "events": ("kubectl", ["get", "events", "--sort-by=.lastTimestamp"]),

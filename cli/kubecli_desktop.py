@@ -28,7 +28,7 @@ CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 class TerminalWindow(tk.Tk):
     KUBECLI_COMMANDS = {
-        "ctx", "ns", "x", "n", "k", "kc", "kubens", "kubectx", "oc", "aliases",
+        "ctx", "ns", "x", "n", "k", "kubens", "kubectx", "oc", "aliases",
         "cloud", "install", "uninstall", "setup", "list", "prompt", "shell-init",
         "kubeconfig", "pods", "po", "svc", "deploy", "nodes", "events",
         "logs", "describe", "exec",
@@ -42,7 +42,7 @@ class TerminalWindow(tk.Tk):
 
     def __init__(self) -> None:
         super().__init__()
-        self.title("KubeCLI Terminal")
+        self.title("K8sOps Terminal")
         self.geometry("980x620")
         self.minsize(700, 420)
         self.configure(background=BG)
@@ -59,7 +59,7 @@ class TerminalWindow(tk.Tk):
         self.pty_master: int | None = None
         self._build_ui()
         self.after(30, self._drain_events)
-        self._print("KubeCLI Terminal\n", GREEN)
+        self._print("K8sOps Terminal\n", GREEN)
         self._print(f"Diretório: {self.project_dir}\n", MUTED)
         self._print("Digite 'help' para ver os atalhos.\n\n", MUTED)
         self._show_prompt()
@@ -68,7 +68,7 @@ class TerminalWindow(tk.Tk):
         top = tk.Frame(self, bg="#1b1b1b", height=34)
         top.pack(fill="x")
         top.pack_propagate(False)
-        tk.Label(top, text="  KubeCLI", bg="#1b1b1b", fg=GREEN, font=("Menlo", 11, "bold")).pack(side="left")
+        tk.Label(top, text="  K8sOps", bg="#1b1b1b", fg=GREEN, font=("Menlo", 11, "bold")).pack(side="left")
         self.config_label = tk.Label(top, text=self.kubeconfig or "kubeconfig padrão", bg="#1b1b1b", fg=MUTED, font=("Menlo", 10))
         self.config_label.pack(side="left", padx=16)
         self._toolbar_button(top, "Editar kubeconfig", self.edit_kubeconfig).pack(side="right", padx=8, pady=4)
@@ -259,7 +259,7 @@ class TerminalWindow(tk.Tk):
         # `k` é um atalho direto para kubectl; não passa novamente pela CLI.
         # Assim `k get pods` nunca herda comportamento de aliases externos,
         # como watch (`-w`).
-        if first in {"k", "kc"}:
+        if first == "k":
             return "kubectl " + " ".join(shlex.quote(item) for item in args[1:])
         if first == "get" and len(args) >= 2 and args[1] == "pods":
             return "kubectl " + " ".join(shlex.quote(item) for item in args)

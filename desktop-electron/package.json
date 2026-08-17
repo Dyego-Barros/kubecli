@@ -1,11 +1,11 @@
 {
-  "name": "kubecli-desktop",
+  "name": "k8sops-desktop",
   "version": "0.1.1",
   "private": true,
-  "description": "Terminal desktop real para a kubecli",
-  "desktopName": "kubecli-desktop",
+  "description": "Terminal desktop para operações Kubernetes",
+  "desktopName": "k8sops",
   "author": {
-    "name": "KubeCLI",
+    "name": "K8sOps",
     "email": "dev@kubecli.local"
   },
   "homepage": "https://github.com/kubecli/kubecli",
@@ -31,7 +31,7 @@
   },
   "build": {
     "appId": "com.kubecli.desktop",
-    "productName": "KubeCLI Desktop",
+    "productName": "K8sOps",
     "asar": true,
     "files": [
       "src/**/*",
@@ -47,7 +47,7 @@
     },
     "linux": {
       "category": "Development",
-      "maintainer": "KubeCLI <dev@kubecli.local>",
+      "maintainer": "K8sOps <dev@kubecli.local>",
       "syncDesktopName": true,
       "icon": "assets/kubecli-icon.svg",
       "target": ["deb", "rpm"]

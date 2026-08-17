@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from .config import McpConfig
@@ -23,6 +24,11 @@ def _connection(server: McpConfig) -> dict[str, Any]:
     if transport == "stdio":
         if not server.command:
             raise ValueError(f"MCP {server.name}: comando não configurado.")
+        if not server.args and server.command in {"uv", "npx", "pnpm", "npm", "python", "python3"}:
+            raise ValueError(
+                f"MCP {server.name}: o comando {server.command!r} não tem argumentos. "
+                "Informe o script/servidor no campo Argumentos."
+            )
         return {"transport": "stdio", "command": server.command, "args": list(server.args)}
     if transport in {"sse", "streamable_http"}:
         if not server.url:
@@ -47,12 +53,18 @@ async def load_tools(servers: list[McpConfig]):
         return [], errors
 
     client = MultiServerMCPClient(connections, tool_name_prefix=True, handle_tool_errors=True)
-    tools = []
-    for name in connections:
+    async def load_one(name):
         try:
-            tools.extend(await client.get_tools(server_name=name))
+            return await client.get_tools(server_name=name), None
         except Exception as error:
-            errors.append(f"{name}: {type(error).__name__}: {error}")
+            return [], f"{name}: {type(error).__name__}: {error}"
+
+    results = await asyncio.gather(*(load_one(name) for name in connections))
+    tools = []
+    for loaded_tools, error in results:
+        tools.extend(loaded_tools)
+        if error:
+            errors.append(error)
     return tools, errors
 
 
@@ -74,12 +86,18 @@ async def check_servers(servers: list[McpConfig]) -> int:
         return 1 if failed else 0
 
     client = MultiServerMCPClient(connections, tool_name_prefix=True, handle_tool_errors=True)
-    for name in connections:
+    async def check_one(name):
         try:
             tools = await client.get_tools(server_name=name)
-            names = ", ".join(tool.name for tool in tools) or "nenhuma ferramenta"
-            print(f"[OK] {name}: {names}")
+            return name, ", ".join(tool.name for tool in tools) or "nenhuma ferramenta", None
         except Exception as error:
+            return name, "", f"{type(error).__name__}: {error}"
+
+    results = await asyncio.gather(*(check_one(name) for name in connections))
+    for name, names, error in results:
+        if error:
             failed = True
-            print(f"[ERRO] {name}: {type(error).__name__}: {error}")
+            print(f"[ERRO] {name}: {error}")
+        else:
+            print(f"[OK] {name}: {names}")
     return 1 if failed else 0

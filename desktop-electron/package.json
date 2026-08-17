@@ -1,6 +1,6 @@
 {
   "name": "k8sops-desktop",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "private": true,
   "description": "Terminal desktop para operações Kubernetes",
   "desktopName": "k8sops",

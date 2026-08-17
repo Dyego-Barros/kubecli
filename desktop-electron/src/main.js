@@ -16,12 +16,27 @@ const defaultSettings = {
   cursorStyle: 'block',
   cursorBlink: true,
   scrollback: 5000,
+  activeProfile: '',
   profiles: {},
 };
 let settings = { ...defaultSettings };
-// O padrão do app é sempre o kubeconfig do usuário.
-// Outro arquivo só é usado quando escolhido explicitamente pela interface.
-let kubeconfig = path.join(os.homedir(), '.kube', 'config');
+// Toda aba nova começa no kubeconfig padrão do usuário. A seleção de outra
+// configuração fica armazenada somente na sessão da aba.
+const defaultKubeconfig = path.join(os.homedir(), '.kube', 'config');
+
+function resolveKubectl() {
+  const loginShell = process.env.SHELL || (fs.existsSync('/bin/zsh') ? '/bin/zsh' : '/bin/sh');
+  try {
+    const resolved = execFileSync(loginShell, ['-lc', 'command -v kubectl'], {
+      encoding: 'utf8',
+      timeout: 5000,
+    }).trim();
+    if (resolved) return resolved.split('\n').pop().trim();
+  } catch {}
+  return 'kubectl';
+}
+
+const kubectlBinary = resolveKubectl();
 
 function aiSessionPath(id) {
   return path.join(app.getPath('userData'), 'ai-sessions', `${String(id).replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
@@ -49,9 +64,9 @@ function readSessionState(id) {
   if (!session) return Promise.resolve({ context: 'sem-contexto', namespace: 'default' });
   const env = { ...process.env, KUBECONFIG: session.runtimeKubeconfig };
   return new Promise((resolve) => {
-    execFile('kubectl', ['config', 'current-context'], { env }, (contextError, contextStdout) => {
+    execFile(kubectlBinary, ['config', 'current-context'], { env }, (contextError, contextStdout) => {
       const context = contextError ? 'sem-contexto' : (contextStdout.trim() || 'sem-contexto');
-      execFile('kubectl', ['config', 'view', '--minify', '-o', 'jsonpath={.contexts[0].context.namespace}'], { env }, (_namespaceError, namespaceStdout) => {
+      execFile(kubectlBinary, ['config', 'view', '--minify', '-o', 'jsonpath={.contexts[0].context.namespace}'], { env }, (_namespaceError, namespaceStdout) => {
         resolve({ context, namespace: namespaceStdout?.trim() || 'default' });
       });
     });
@@ -259,33 +274,19 @@ function writeCustomAliases(aliases) {
   fs.writeFileSync(aliasesPath(), JSON.stringify(aliases, null, 2) + '\n');
 }
 
-function shellInit(shellPath) {
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function shellInit(shellPath, kubeconfigPath) {
   const customAliases = Object.keys(readCustomAliases())
     .filter((name) => /^[A-Za-z_][A-Za-z0-9_-]*$/.test(name))
     .map((name) => `alias ${name}='kubecli ${name}'`);
   const common = [
+    `export KUBECONFIG=${shellQuote(kubeconfigPath)}`,
     "alias k='kubectl'",
-    "alias kgp='kubectl get pods'",
-    "alias kgn='kubectl get nodes'",
-    "alias kctx='kubecli ctx list'",
-    "alias kns='kubecli ns list'",
-    "alias kdesc='kubectl describe'",
-    "alias kl='kubectl logs'",
-    "alias kevents='kubectl get events --sort-by=.lastTimestamp'",
-    "alias kroll='kubectl rollout status'",
-    "alias get='kubectl get'",
-    "alias pods='kubectl get pods'",
-    "alias po='kubectl get pods'",
-    "alias svc='kubectl get services'",
-    "alias deploy='kubectl get deployments'",
-    "alias nodes='kubectl get nodes'",
-    "alias ctx='kubecli ctx'",
-    "alias ns='kubecli ns'",
-    "alias x='kubecli ctx'",
-    "alias n='kubecli ns'",
-    "alias install='kubecli install'",
-    "alias uninstall='kubecli uninstall'",
-    "alias kubeconfig='kubecli kubeconfig'",
+    "alias kctx='kubecli ctx'",
+    "alias kns='kubecli ns'",
     ...customAliases,
     "clear",
   ];
@@ -320,7 +321,7 @@ function createWindow() {
       nodeIntegration: true,
     },
   });
-  win.webContents.once('did-finish-load', () => startTerminal('main', kubeconfig));
+  win.webContents.once('did-finish-load', () => startTerminal('main', defaultKubeconfig));
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.on('closed', () => {
     sessions.forEach((session) => {
@@ -460,7 +461,7 @@ function createApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
+function startTerminal(id = 'main', sessionKubeconfig = defaultKubeconfig) {
   if (process.platform === 'win32') {
     win?.webContents.send('terminal-error', { id, message: 'Esta versão suporta somente macOS e Linux.' });
     return;
@@ -510,7 +511,7 @@ function startTerminal(id = 'main', sessionKubeconfig = kubeconfig) {
     stateRefreshPending: false,
     lastState: null,
   });
-  session.write(shellInit(shellPath));
+  session.write(shellInit(shellPath, isolated.path));
   session.onData((data) => {
     const output = String(data);
     const current = sessions.get(id);
@@ -551,8 +552,8 @@ ipcMain.on('terminal-resize', (_event, { id = 'main', cols, rows } = {}) => {
 ipcMain.on('terminal-stop', (_event, id = 'main') => sessions.get(id)?.pty.write('\u0003'));
 ipcMain.handle('create-terminal', (_event, { id, kubeconfig: sessionKubeconfig } = {}) => {
   const tabId = id || `tab-${Date.now()}`;
-  startTerminal(tabId, sessionKubeconfig || kubeconfig);
-  return { id: tabId, kubeconfig: sessionKubeconfig || kubeconfig };
+  startTerminal(tabId, sessionKubeconfig || defaultKubeconfig);
+  return { id: tabId, kubeconfig: sessionKubeconfig || defaultKubeconfig };
 });
 ipcMain.handle('close-terminal', (_event, id) => {
   if (!id || id === 'main') return { code: 1, message: 'A aba principal não pode ser fechada.' };
@@ -570,22 +571,21 @@ ipcMain.handle('choose-kubeconfig', async (_event, { id = 'main' } = {}) => {
     properties: ['openFile'],
   });
   if (result.canceled || !result.filePaths[0]) {
-    return { kubeconfig: sessions.get(id)?.kubeconfig || kubeconfig };
+    return { kubeconfig: sessions.get(id)?.kubeconfig || defaultKubeconfig };
   }
   const selectedKubeconfig = result.filePaths[0];
-  if (id === 'main') kubeconfig = selectedKubeconfig;
   sessions.get(id)?.pty.kill();
   startTerminal(id, selectedKubeconfig);
   return { kubeconfig: selectedKubeconfig, id };
 });
 ipcMain.handle('edit-kubeconfig', async (_event, { id = 'main' } = {}) => {
-  const currentKubeconfig = sessions.get(id)?.kubeconfig || kubeconfig;
+  const currentKubeconfig = sessions.get(id)?.kubeconfig || defaultKubeconfig;
   if (!fs.existsSync(currentKubeconfig)) fs.mkdirSync(path.dirname(currentKubeconfig), { recursive: true });
   if (!fs.existsSync(currentKubeconfig)) fs.writeFileSync(currentKubeconfig, '');
   await shell.openPath(currentKubeconfig);
   return { kubeconfig: currentKubeconfig, id };
 });
-ipcMain.handle('get-kubeconfig', (_event, { id = 'main' } = {}) => sessions.get(id)?.kubeconfig || kubeconfig);
+ipcMain.handle('get-kubeconfig', (_event, { id = 'main' } = {}) => sessions.get(id)?.kubeconfig || defaultKubeconfig);
 ipcMain.handle('choose-agent', async (_event, { id = 'main' } = {}) => {
   const result = await dialog.showOpenDialog(win, {
     title: 'Escolher AGENTS.md',
@@ -635,8 +635,8 @@ ipcMain.handle('remove-alias', (_event, { name }) => {
 });
 function runKubectl(args) {
   return new Promise((resolve) => {
-    const env = { ...process.env, KUBECONFIG: kubeconfig };
-    execFile('kubectl', args, { env }, (error, stdout, stderr) => resolve({
+    const env = { ...process.env, KUBECONFIG: defaultKubeconfig };
+    execFile(kubectlBinary, args, { env }, (error, stdout, stderr) => resolve({
       code: error?.code || 0,
       stdout: stdout?.trim() || '',
       stderr: stderr?.trim() || '',
@@ -690,7 +690,7 @@ ipcMain.handle('save-settings', (_event, nextSettings) => {
 ipcMain.handle('save-profile', (_event, { name, profileSettings = {} }) => {
   const profileName = String(name || '').trim();
   if (!profileName) return { code: 1, message: 'Informe um nome para o perfil.' };
-  const { profiles = {}, ...visualSettings } = settings;
+  const { profiles = {}, activeProfile: _activeProfile, ...visualSettings } = settings;
   const savedSettings = { ...visualSettings, ...profileSettings };
   delete savedSettings.profiles;
   settings.profiles = { ...profiles, [profileName]: savedSettings };
@@ -710,7 +710,7 @@ ipcMain.handle('apply-profile', (_event, name) => {
   const profileName = String(name || '').trim();
   const profile = settings.profiles?.[profileName];
   if (!profile) return { code: 1, message: 'Perfil não encontrado.' };
-  settings = { ...defaultSettings, ...settings, ...profile, profiles: settings.profiles };
+  settings = { ...defaultSettings, ...settings, ...profile, activeProfile: profileName, profiles: settings.profiles };
   saveSettings();
   return {
     code: 0,
@@ -720,7 +720,7 @@ ipcMain.handle('apply-profile', (_event, name) => {
   };
 });
 ipcMain.handle('reset-settings', () => {
-  settings = { ...defaultSettings };
+  settings = { ...defaultSettings, activeProfile: '' };
   saveSettings();
   return { ...settings };
 });

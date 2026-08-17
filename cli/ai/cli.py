@@ -7,7 +7,7 @@ from .agents_md import find_agents, load_agent
 from .config import config_path, load_config
 from .credentials import get_credential
 from .graph import run_graph
-from .mcp import check_servers, list_servers
+from .mcp import ask_tool, call_tool, check_servers, list_servers
 from .models import ModelError
 from .session import Session, detect_kube_scope
 
@@ -39,7 +39,13 @@ def run_ai_command(args) -> int:
         if action == "mcp":
             if args.mcp_action == "test":
                 import asyncio
-                return asyncio.run(check_servers(servers))
+                return asyncio.run(check_servers(servers, args.server))
+            if args.mcp_action == "call":
+                import asyncio
+                return asyncio.run(call_tool(servers, args.server, args.tool, args.arguments))
+            if args.mcp_action == "ask":
+                import asyncio
+                return asyncio.run(ask_tool(servers, models, args.server, args.tool, args.arguments))
             return list_servers(servers)
         if action == "start":
             path, content = load_agent(args.agent)

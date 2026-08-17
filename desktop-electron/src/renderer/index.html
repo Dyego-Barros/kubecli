@@ -237,36 +237,22 @@
       </div>
       <div class="help-content">
         <h3>Como funciona</h3>
-        <p>O K8sOps reúne os comandos Kubernetes, OpenShift, cloud e gerenciamento de ferramentas em um único terminal. Os prefixos são opcionais no app.</p>
+        <p>O K8sOps reúne Kubernetes, OpenShift, cloud, agentes e MCP em um único terminal. Os aliases padrão são mínimos e usam o prefixo <code>k</code>.</p>
 
         <h3>Comandos Kubernetes</h3>
         <code>k get pods</code><span>Atalho para <b>kubectl get pods</b></span>
-        <code>kgp</code><span>Lista pods no namespace atual</span>
-        <code>kgn</code><span>Lista nodes do cluster</span>
-        <code>kdesc RECURSO</code><span>Atalho para <b>kubectl describe RECURSO</b></span>
-        <code>kl POD</code><span>Atalho para <b>kubectl logs POD</b></span>
-        <code>kevents</code><span>Lista eventos ordenados por data</span>
-        <code>kroll RECURSO</code><span>Atalho para <b>kubectl rollout status RECURSO</b></span>
-        <code>get pods -A</code><span>Executa <b>kubectl get pods -A</b></span>
-        <code>pods</code><span>Lista pods no namespace atual</span>
-        <code>svc</code><span>Lista services</span>
-        <code>deploy</code><span>Lista deployments</span>
-        <code>nodes</code><span>Lista nodes do cluster</span>
-        <code>events</code><span>Lista eventos ordenados por data</span>
-        <code>logs POD</code><span>Exibe logs de um pod</span>
-        <code>describe pod/POD</code><span>Detalha um recurso</span>
+        <code>k COMANDO</code><span>Executa <b>kubectl COMANDO</b></span>
         <code>kubectl COMANDO</code><span>Passa qualquer comando diretamente ao kubectl</span>
-        <p>O alias recomendado para comandos Kubernetes é <code>k</code>.</p>
+        <p>O único alias Kubernetes padrão é <code>k</code>. Crie atalhos adicionais com <code>aliases add</code>.</p>
 
         <h3>Contexto e namespace</h3>
-        <code>ctx</code><span>Lista contextos</span>
-        <code>ctx list</code><span>Lista contextos explicitamente</span>
-        <code>ctx use NOME</code><span>Troca o contexto Kubernetes</span>
-        <code>x</code><span>Atalho para listar contextos</span>
-        <code>ns</code><span>Lista namespaces</span>
-        <code>ns list</code><span>Lista namespaces explicitamente</span>
-        <code>ns use NOME</code><span>Troca o namespace atual</span>
-        <code>n NOME</code><span>Atalho para trocar namespace</span>
+        <code>kctx</code><span>Lista contextos</span>
+        <code>kctx list</code><span>Lista contextos explicitamente</span>
+        <code>kctx use NOME</code><span>Troca o contexto Kubernetes</span>
+        <code>kns</code><span>Lista namespaces</span>
+        <code>kns list</code><span>Lista namespaces explicitamente</span>
+        <code>kns use NOME</code><span>Troca o namespace atual</span>
+        <p>Os comandos completos <code>kubecli ctx</code> e <code>kubecli ns</code> também continuam disponíveis.</p>
 
         <h3>CLIs Kubernetes</h3>
         <code>kubectl ARGS</code><span>Executa kubectl com os argumentos informados</span>
@@ -296,26 +282,30 @@
 
         <h3>Aliases disponíveis no shell</h3>
         <code>k</code><span>Alias principal para <b>kubectl</b></span>
-        <code>get</code><span>Alias para <b>kubectl get</b></span>
-        <code>pods</code> / <code>po</code><span>Aliases para <b>kubectl get pods</b></span>
-        <code>svc</code><span>Alias para <b>kubectl get services</b></span>
-        <code>deploy</code><span>Alias para <b>kubectl get deployments</b></span>
-        <code>nodes</code><span>Alias para <b>kubectl get nodes</b></span>
-        <code>ctx</code> / <code>x</code><span>Aliases para gerenciamento de contextos</span>
-        <code>ns</code> / <code>n</code><span>Aliases para gerenciamento de namespaces</span>
-        <code>install</code><span>Alias para <b>kubecli install</b></span>
-        <code>uninstall</code><span>Alias para <b>kubecli uninstall</b></span>
-        <code>kubeconfig</code><span>Alias para <b>kubecli kubeconfig</b></span>
+        <code>kctx</code><span>Alias para gerenciamento de contextos</span>
+        <code>kns</code><span>Alias para gerenciamento de namespaces</span>
+        <p>Outros atalhos devem ser criados pelo usuário com <code>aliases add</code>.</p>
 
         <h3>Inteligência artificial e MCP</h3>
-        <code>kubecli ai agents</code><span>Lista arquivos AGENTS.md disponíveis</span>
-        <code>kubecli ai models</code><span>Lista os modelos de IA configurados</span>
-        <code>kubecli ai list</code><span>Alias de <b>ai models</b></span>
-        <code>kubecli ai mcp list</code><span>Lista servidores MCP configurados</span>
-        <code>kubecli ai mcp test</code><span>Testa os servidores MCP configurados</span>
-        <code>kubecli ai start --agent AGENTS.md</code><span>Inicia uma sessão de troubleshooting</span>
-        <code>kubecli ai ask "PROBLEMA"</code><span>Envia uma pergunta ou problema para a sessão atual</span>
-        <code>kubecli ai history</code><span>Mostra agente, contexto, modelos e última resposta</span>
+        <p>Use o alias <code>ai</code> no terminal para os comandos de agentes e MCP. O agente é definido por um arquivo <code>AGENTS.md</code>; o MCP conecta ferramentas externas ao K8sOps.</p>
+        <h4>Agentes</h4>
+        <code>ai agents [DIRETÓRIO]</code><span>Lista arquivos AGENTS.md encontrados</span>
+        <code>ai start --agent /caminho/AGENTS.md</code><span>Inicia a sessão com o arquivo escolhido</span>
+        <code>ai ask "PROBLEMA"</code><span>Envia uma solicitação ao agente atual</span>
+        <code>ai history</code><span>Mostra agente, contexto, modelos e última resposta</span>
+        <p>Fluxo: primeiro liste os arquivos com <code>ai agents</code>, escolha um caminho real e passe esse caminho para <code>ai start --agent</code>.</p>
+        <h4>MCP</h4>
+        <code>ai mcp list</code><span>Lista os servidores MCP cadastrados</span>
+        <code>ai mcp test</code><span>Descobre as tools de todos os MCPs habilitados</span>
+        <code>ai mcp test NOME</code><span>Descobre as tools de um MCP específico</span>
+        <code>ai mcp call SERVIDOR TOOL --arguments '{}'</code><span>Chama uma tool e mostra o retorno bruto</span>
+        <code>ai mcp ask SERVIDOR TOOL --arguments '{}'</code><span>Chama a tool e pede à LLM para formatar o retorno</span>
+        <p><b>stdio:</b> o K8sOps inicia o servidor MCP configurado em Comando e Argumentos.</p>
+        <p><b>sse:</b> o servidor já está rodando e o K8sOps conecta à URL SSE.</p>
+        <p><b>streamable_http:</b> o servidor já está rodando e o K8sOps conecta à URL HTTP streamable, normalmente terminada em <code>/mcp</code>.</p>
+        <p>Em <code>stdio</code>, Comando contém somente o executável e Argumentos contém os parâmetros. Em HTTP, deixe Comando e Argumentos vazios e informe apenas a URL.</p>
+        <code>ai models</code><span>Lista os modelos de IA configurados</span>
+        <code>ai list</code><span>Alias de <b>ai models</b></span>
         <p>No desktop, use o menu <b>IA</b> para escolher o agente, configurar modelos e APIs ou configurar servidores MCP.</p>
 
         <h3>Cloud</h3>
@@ -335,6 +325,8 @@
         <code>prompt</code><span>Mostra contexto e namespace atuais</span>
         <code>shell-init zsh</code><span>Gera integração para o .zshrc</span>
         <code>shell-init bash</code><span>Gera integração para o .bashrc</span>
+        <code>eval "$(kubecli shell-init zsh)"</code><span>Ativa aliases e prompt dinâmico no Zsh atual</span>
+        <p>Execute esse comando depois de cadastrar aliases ou abrir um terminal que ainda não carregou a integração do K8sOps.</p>
         <code>kubecli --help</code><span>Exibe a ajuda completa da CLI</span>
 
         <h3>Atalhos do desktop</h3>

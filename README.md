@@ -46,25 +46,25 @@ kubecli ns use monitoramento
 
 # Atalhos para kubectl
 kubecli k get pods
-kubecli po -n monitoramento
-kubecli svc -A
-kubecli deploy -A
-kubecli logs deploy/minha-aplicacao
+kubectl get services -A
+kubectl get deployments -A
+kubectl logs deploy/minha-aplicacao
 
 # OpenShift
 kubecli oc get projects
 ```
 
-Os atalhos abaixo são equivalentes:
+Os aliases padrão usam o prefixo `k`:
 
 | KubeCLI | Comando executado |
 | --- | --- |
 | `kubecli k ...` | `kubectl ...` |
-| `kubecli po ...` ou `kubecli pods ...` | `kubectl get pods ...` |
-| `kubecli svc ...` | `kubectl get services ...` |
-| `kubecli deploy ...` | `kubectl get deployments ...` |
-| `kubecli x` | `kubectx` |
-| `kubecli n ...` | `kubens ...` |
+
+No shell, os atalhos padrão são `k`, `kctx` e `kns`. Os comandos completos
+`kubecli ctx` e `kubecli ns` continuam disponíveis.
+
+Os atalhos `po`, `pods`, `svc`, `deploy`, `nodes`, `x` e `n` não são mais
+criados por padrão. Se precisar deles, cadastre aliases personalizados.
 
 ## Kubeconfig
 

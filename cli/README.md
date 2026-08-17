@@ -46,8 +46,8 @@ outro arquivo pelo botão `Escolher kubeconfig`. O prompt exibe o contexto e o n
 ele é atualizado após comandos como `kubecli ctx use` e `kubecli ns use`. O aplicativo não armazena tokens.
 O botão `Editar kubeconfig` abre o arquivo atual no editor de texto padrão do sistema.
 
-No terminal desktop, os prefixos são opcionais. Por exemplo, `ctx list`, `ns list`, `pods` e
-`get pods -A` são expandidos automaticamente para os comandos correspondentes.
+No terminal desktop, os aliases padrão são intencionalmente mínimos e usam o prefixo `k`:
+`k` para `kubectl`, `kctx` para contextos e `kns` para namespaces. Outros atalhos podem ser cadastrados pelo usuário.
 Instalações (`oc install`, `setup`, etc.) são abertas no Terminal nativo para preservar prompts,
 `sudo` e entrada interativa do gerenciador de pacotes.
 
@@ -197,13 +197,8 @@ eval "$(kubecli shell-init zsh)"
 
 ```bash
 kubecli k get pods -A       # kubectl
-kubecli po -n monitoring    # kubectl get pods -n monitoring
-kubecli svc -A              # kubectl get services -A
-kubecli deploy -A           # kubectl get deployments -A
-kubecli logs deploy/app     # kubectl logs deploy/app
-kubecli describe pod/app    # kubectl describe pod/app
-kubecli x                   # kubectx
-kubecli n monitoring        # kubens monitoring
+kubecli kubectl get pods -A
+kubecli aliases add meus-pods kubectl get pods -n monitoring
 ```
 
 ## Configuração dos CLIs de nuvem

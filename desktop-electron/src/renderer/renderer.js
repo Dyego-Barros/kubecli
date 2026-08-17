@@ -245,11 +245,9 @@ async function closeSession(id) {
 async function createTab(label = '') {
   const id = `tab-${Date.now()}`;
   const tabLabel = label.trim() || defaultTabLabel;
-  // Uma nova aba deve começar pelo kubeconfig-base selecionado, nunca pela
-  // cópia runtime da aba ativa, que pode ter outro contexto/namespace.
-  const source = activeSession()?.kubeconfig;
-  createSession(id, tabLabel, source || '');
-  await ipcRenderer.invoke('create-terminal', { id, kubeconfig: source });
+  // Cada aba nova começa no ~/.kube/config; a seleção de outra aba não é herdada.
+  createSession(id, tabLabel, '');
+  await ipcRenderer.invoke('create-terminal', { id });
   switchSession(id);
 }
 
@@ -263,7 +261,7 @@ function openSettings(selectedProfile = '') {
     option.textContent = name;
     profileSelect.appendChild(option);
   });
-  profileSelect.value = selectedProfile;
+  profileSelect.value = selectedProfile || settings.activeProfile || '';
   document.getElementById('setting-theme').value = settings.theme;
   document.getElementById('setting-font-color').value = settings.fontColor;
   document.getElementById('setting-font-family').value = settings.fontFamily;
@@ -853,6 +851,7 @@ document.getElementById('save-profile').addEventListener('click', async () => {
   const result = await ipcRenderer.invoke('save-profile', { name, profileSettings });
   if (result.code) return showProfileStatus(result);
   currentSettings = result.settings;
+  currentSettings.activeProfile = name;
   showProfileStatus(result);
   document.getElementById('setting-profile-name').value = '';
   openSettings(name);
@@ -863,6 +862,7 @@ document.getElementById('delete-profile').addEventListener('click', async () => 
   const result = await ipcRenderer.invoke('delete-profile', name);
   if (result.code) return showProfileStatus(result);
   currentSettings = result.settings;
+  currentSettings.activeProfile = '';
   showProfileStatus(result);
   openSettings();
 });

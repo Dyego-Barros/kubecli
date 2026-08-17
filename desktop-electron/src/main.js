@@ -293,13 +293,14 @@ function shellInit(shellPath) {
     return [
       "autoload -U colors && colors",
       "setopt prompt_subst",
-      "precmd() { print -Pn '\\e]777;KUBECLI_READY\\a'; }",
+      "precmd() { printf '\\033]777;KUBECLI_READY\\007'; }",
       "PROMPT='%F{green}%n@%m%f %F{white}%U%~%u %#%f '",
       ...common,
     ].join(';') + ';\n';
   }
   return [
-    "PROMPT_COMMAND='printf \\\"\\e]777;KUBECLI_READY\\a\\\"'",
+    "_kubecli_ready() { printf '\\033]777;KUBECLI_READY\\007'; }",
+    "PROMPT_COMMAND=_kubecli_ready",
     "PS1='\\033[32m\\u@\\h\\033[0m \\033[37m\\033[4m\\w\\033[24m\\033[0m \\$ '",
     ...common,
   ].join(';') + ';\n';
@@ -333,6 +334,15 @@ function createWindow() {
 
 function sendMenuCommand(command) {
   win?.webContents.send('menu-command', command);
+}
+
+function showAbout() {
+  dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'Sobre o K8sOps',
+    message: 'K8sOps',
+    detail: `Terminal para operações Kubernetes\nVersão ${app.getVersion()}\nElectron ${process.versions.electron}\nNode.js ${process.versions.node}`,
+  });
 }
 
 function createApplicationMenu() {
@@ -376,7 +386,7 @@ function createApplicationMenu() {
     {
       label: 'K8sOps',
       submenu: [
-        { role: 'about' },
+        { label: 'Sobre o K8sOps', click: showAbout },
         { type: 'separator' },
         { label: 'Configurações do terminal', click: () => sendMenuCommand('settings') },
         { type: 'separator' },
